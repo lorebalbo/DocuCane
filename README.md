@@ -1,67 +1,72 @@
 # DocuCane
 
-Render a folder of Markdown into **one self-contained HTML page** you can open by
-double-clicking it — and get flowcharts that stay readable when they get dense.
+Turn a folder of Markdown into **one self-contained HTML page** you can open by double-clicking —
+and get flowcharts that stay readable when they get dense.
 
-No server. No dependencies. No build pipeline. One file you can email.
+No server, no dependencies, no build pipeline. One file you can email.
+
+![The DocuCane dashboard](assets/dashboard.jpg)
+
+## Quick start
 
 ```bash
-npx docucane ./docs          # render a folder, no configuration
-npx docucane init            # or wire a project up properly, once
+npx docucane ./docs      # render a folder, zero configuration
+npx docucane init        # or wire a project up once, then just `npx docucane`
 ```
 
----
+`init` writes a `docs.config.json`, creates the folder if missing, gitignores the output, and
+installs the agent files described [below](#for-agents).
 
-## Why
+Output is `.docucane/index.html` plus a `vendor/` folder. Needs a network connection **once** —
+mermaid, ELK and the Inter font are cached on the first build; every build after that is offline.
 
-A folder of Markdown is the cheapest place to keep documentation. It is not a pleasant place to
-*read* it: you land in a file tree, open files one at a time, lose the thread between them, and get
-a static picture where you wanted a diagram you could actually inspect.
+## Flowcharts that stay readable
 
-DocuCane is the reading half. It changes nothing in your folder and writes one page next to it.
+Mermaid is a great way to *write* a diagram and a poor way to *read* a dense one. Its default
+layout routes edges as free curves and drops each label at the middle of its edge with nothing
+reserving space for it. Past a dozen transitions, labels collide with each other and with other
+arcs, and **you can no longer tell which text belongs to which arrow** — at which point the diagram
+has stopped working and the reader falls back to the prose.
 
-### The diagram problem, specifically
+Same 10 boxes and 24 labelled transitions, both engines:
 
-Mermaid is an excellent way to *write* a diagram and a poor way to *read* a dense one. Its default
-layout routes edges as free curves and drops each edge label at the middle of its edge with nothing
-reserving space for it. Past a dozen or so transitions, labels land on top of each other and on top
-of other arcs — and **you can no longer tell which text belongs to which arrow.** At that point the
-diagram has stopped working.
+| Mermaid's own layout | DocuCane |
+|---|---|
+| ![Mermaid layout](assets/layout-mermaid.jpg) | ![DocuCane layout](assets/layout-docucane.jpg) |
+| labels overlapping each other and stranded far from their arcs | orthogonal lanes, every label in reserved space, tied to its own arc |
 
-DocuCane sends flowcharts — and only flowcharts — down a different path:
+Mermaid still does the **parsing** — every bit of flowchart syntax it understands keeps working,
+and there is no second dialect to learn. [ELK](https://eclipse.dev/elk/)'s layered algorithm does
+the **layout**: orthogonal edge routing, edge labels as first-class objects the algorithm reserves
+room for, and crossing minimisation as a real objective. DocuCane draws the result.
 
-| | Mermaid's default | DocuCane |
-|---|---|---|
-| Edge routing | free curves | **orthogonal** — straight runs, right-angle bends, shared lanes |
-| Edge labels | placed afterwards at the midpoint | **reserved space in the layout** — nothing lands on a label, no label lands on a stranger's arc |
-| Crossings | a side effect | a minimisation objective |
-| Ambiguity | yours to squint at | each label **tied to its arc** by a hairline ending in a dot on that arc |
-| Dense charts | unreadable | **hover to isolate** an arrow or a box, click to pin |
+Layout alone still leaves six parallel arcs with six labels beside them, so each label is also
+**tied to its arc** by a hairline ending in a dot on that arc — and you can interrogate the chart:
 
-Mermaid still does the parsing, so every bit of flowchart syntax it understands keeps working and
-there is no second dialect to learn. [ELK](https://eclipse.dev/elk/)'s layered algorithm does the
-layout; DocuCane draws the result and makes it interrogable.
+![Hovering a box isolates it](assets/hover.jpg)
 
-Everything that is not a flowchart — sequence, ER, state, class, gantt, pie — renders through
-mermaid as before, and mermaid is also the fallback if anything goes wrong. Every diagram carries a
-button to switch between the two, so the comparison is always one click away.
+- **Hover an arrow** — the arrow, its text and the boxes at both ends light up; the rest fades.
+- **Hover a box** — the box, every arrow touching it, and the box at the far end of each.
+- **Click** to pin, **Esc** to release. Works in the full-size view too.
 
-## What you get
+Everything that is not a flowchart (sequence, ER, state, gantt, pie) renders through mermaid as
+before, and mermaid is the fallback if anything goes wrong. Every diagram carries a button to
+switch between the two, so the comparison above is always one click away.
 
-- **One file.** `index.html` plus a `vendor/` folder. The font travels inside the page; the diagram
-  engines sit beside it. Works from `file://`, offline, on a plane.
-- **A sidebar** of every document, grouped, ordered by the number in the filename (`10.` after `9.`,
-  as you meant it).
-- **Foldable sections.** Every heading owns what follows it. What you fold is remembered.
+## What else you get
+
+- **A sidebar** of every document, grouped by sub-folder, ordered by the number in the filename
+  (`10.` after `9.`, as you meant it).
+- **Foldable sections** — every heading owns what follows it, and what you fold is remembered.
 - **Links that work in both places.** `[Diagrams](./2.%20DIAGRAMS.md#why-elk)` becomes in-page
   navigation here and still resolves on GitHub — the anchors are GitHub's.
-- **Diagrams you can inspect.** Hover to isolate, click to pin, expand to full size, drag and zoom.
-- **Margin comments** for reading a draft (stored in your browser, not in the repo).
-- **Search**, a section rail, previous/next, a top bar, and print styles that drop the interface.
+- **Full-size diagrams** with drag-to-pan and scroll-to-zoom.
+- **Margin comments** for reading a draft (kept in your browser, not in the repo).
+- Search, a section rail, previous/next, and print styles that drop the interface.
 
 ## Configuration
 
-None is required. When you want it, `docs.config.json` at the project root:
+Optional. `docs.config.json` at the project root:
 
 ```json
 {
@@ -72,51 +77,32 @@ None is required. When you want it, `docs.config.json` at the project root:
 }
 ```
 
-Every setting, and the full command line, is in [docs/3. CONFIGURATION.md](./docs/3.%20CONFIGURATION.md).
+Every setting and flag: [docs/3. CONFIGURATION.md](./docs/3.%20CONFIGURATION.md).
 
 ## For agents
 
-`npx docucane init` also installs, into the project's `.claude/`:
+`docucane init` installs into the project's `.claude/`:
 
 | | |
 |---|---|
 | `commands/docs.md` | `/docs` — render the dashboard and open it |
-| `skills/write-doc/` | how to write a document in this house style, including what makes a good diagram |
+| `skills/write-doc/` | how to write a document in this house style, and what makes a good diagram |
 | `skills/audit-docs/` | a read-only structured audit of the documents |
-
-So an agent working in that repository knows both how to write a document and how to render the
-result.
 
 ## Documentation
 
-The `docs/` folder is DocuCane's own documentation, and rendering it is the quickest way to see
-what the tool does:
+`docs/` is DocuCane's own documentation — rendering it is the fastest way to see the tool:
 
 ```bash
-git clone git@github.com:lorebalbo/DocuCane.git
-cd DocuCane
-node bin/docucane.mjs
+git clone git@github.com:lorebalbo/DocuCane.git && cd DocuCane && node bin/docucane.mjs
 ```
 
-- [0. ABOUT](./docs/0.%20ABOUT.md) — what it is for, and what it is not for
-- [1. WRITING](./docs/1.%20WRITING.md) — what the builder does with a file
-- [2. DIAGRAMS](./docs/2.%20DIAGRAMS.md) — the diagram problem and the fix, with a dense example
-- [3. CONFIGURATION](./docs/3.%20CONFIGURATION.md) — every setting and flag
-- [4. READING](./docs/4.%20READING.md) — everything the page does for the reader
+[0. ABOUT](./docs/0.%20ABOUT.md) · [1. WRITING](./docs/1.%20WRITING.md) ·
+[2. DIAGRAMS](./docs/2.%20DIAGRAMS.md) · [3. CONFIGURATION](./docs/3.%20CONFIGURATION.md) ·
+[4. READING](./docs/4.%20READING.md)
 
-## Requirements
+## Requirements & tests
 
-Node 18 or newer, and a network connection **once** — the first build caches mermaid, ELK and the
-Inter font under the output folder. Every build after that is offline.
-
-## Tests
-
-```bash
-npm run check
-```
-
-Builds a throwaway folder and asserts the page came out whole. No test framework.
-
-## License
+Node 18+. `npm run check` builds a throwaway folder and asserts the page came out whole.
 
 MIT
