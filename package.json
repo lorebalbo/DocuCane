@@ -1,0 +1,17 @@
+{
+  "name": "docucane",
+  "version": "1.0.0",
+  "description": "Render a folder of Markdown into one self-contained documentation dashboard, with flowcharts that stay readable when they get dense.",
+  "type": "module",
+  "bin": { "docucane": "bin/docucane.mjs" },
+  "files": ["bin", "src", "skills", "commands", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node bin/docucane.mjs",
+    "build": "node bin/docucane.mjs --no-open",
+    "check": "node test/smoke.mjs"
+  },
+  "keywords": ["documentation", "markdown", "mermaid", "elk", "flowchart", "static-site", "offline"],
+  "license": "MIT",
+  "dependencies": {}
+}
