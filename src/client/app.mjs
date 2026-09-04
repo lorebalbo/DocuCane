@@ -253,7 +253,7 @@ export const APP_JS = String.raw`
     tx = e.clientX - sx; ty = e.clientY - sy; apply();
   });
   box.addEventListener('pointerup', function(){ dragging = false; box.classList.remove('drag'); });
-  box.addEventListener('wheel', function(e){ e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12); }, { passive: false });
+  box.addEventListener('wheel', function(e){ e.preventDefault(); zoom(e.deltaY < 0 ? 1.042 : 1 / 1.042); }, { passive: false });
   document.getElementById('zoom-in').addEventListener('click', function(){ zoom(1.25); });
   document.getElementById('zoom-out').addEventListener('click', function(){ zoom(1 / 1.25); });
   document.getElementById('zoom-close').addEventListener('click', closeBox);
