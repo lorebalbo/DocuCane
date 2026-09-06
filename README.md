@@ -51,12 +51,19 @@ Layout alone still leaves six parallel arcs with six labels beside them, so each
 
 ### ER diagrams get the same treatment
 
-Relationships are routed and labelled the same way, and the entity itself is drawn as a **table**
-rather than mermaid's grid of boxed cells: the type and the name are columns measured across the
-whole entity so they line up, and **PK** / **FK** / **UK** are pinned to the right edge as a column
-of their own you can run your eye down. Cardinality is drawn in standard crow's-foot notation at
-the end where it belongs, and hovering works exactly as above — hover a relationship and both
-entities light up, hover an entity and you get everything that touches it.
+Same six entities and seven relationships, both engines:
+
+| Mermaid's own layout | DocuCane |
+|---|---|
+| ![Mermaid layout](assets/er-mermaid.jpg) | ![DocuCane layout](assets/er-docucane.jpg) |
+| every cell boxed, empty ones included, keys as `PK,FK` text in a cell, relationships as curves with the label loose beside them | columns that line up, keys as a column of their own, orthogonal routes, every label tied to its line, crow's feet against the entity |
+
+The entity is drawn as a **table** rather than a grid of boxed cells: the type and the name are
+columns measured across the whole entity so they line up, **PK** / **FK** / **UK** are pinned to
+the right edge as a column you can run your eye down, and a comment sits in italics after the name.
+Cardinality is standard crow's-foot notation, drawn against the entity where it belongs. Hovering
+works exactly as above — hover a relationship and both entities light up, hover an entity and you
+get everything that touches it.
 
 Everything else (sequence, state, gantt, pie, class) renders through mermaid as before, and mermaid
 is the fallback if anything goes wrong. Every diagram carries a button to switch between the two,
