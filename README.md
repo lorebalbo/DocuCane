@@ -1,7 +1,7 @@
 # DocuCane
 
 Turn a folder of Markdown into **one self-contained HTML page** you can open by double-clicking —
-and get flowcharts that stay readable when they get dense.
+and get flowcharts and ER diagrams that stay readable when they get dense.
 
 No server, no dependencies, no build pipeline. One file you can email.
 
@@ -20,7 +20,7 @@ installs the agent files described [below](#for-agents).
 Output is `.docucane/index.html` plus a `vendor/` folder. Needs a network connection **once** —
 mermaid, ELK and the Inter font are cached on the first build; every build after that is offline.
 
-## Flowcharts that stay readable
+## Diagrams that stay readable
 
 Mermaid is a great way to *write* a diagram and a poor way to *read* a dense one. Its default
 layout routes edges as free curves and drops each label at the middle of its edge with nothing
@@ -49,9 +49,18 @@ Layout alone still leaves six parallel arcs with six labels beside them, so each
 - **Hover a box** — the box, every arrow touching it, and the box at the far end of each.
 - **Click** to pin, **Esc** to release. Works in the full-size view too.
 
-Everything that is not a flowchart (sequence, ER, state, gantt, pie) renders through mermaid as
-before, and mermaid is the fallback if anything goes wrong. Every diagram carries a button to
-switch between the two, so the comparison above is always one click away.
+### ER diagrams get the same treatment
+
+Relationships are routed and labelled the same way, and the entity itself is drawn as a **table**
+rather than mermaid's grid of boxed cells: the type and the name are columns measured across the
+whole entity so they line up, and **PK** / **FK** / **UK** are pinned to the right edge as a column
+of their own you can run your eye down. Cardinality is drawn in standard crow's-foot notation at
+the end where it belongs, and hovering works exactly as above — hover a relationship and both
+entities light up, hover an entity and you get everything that touches it.
+
+Everything else (sequence, state, gantt, pie, class) renders through mermaid as before, and mermaid
+is the fallback if anything goes wrong. Every diagram carries a button to switch between the two,
+so the comparison above is always one click away.
 
 ## What else you get
 

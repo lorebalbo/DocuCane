@@ -2,19 +2,19 @@
 //
 // Two renderers live here.
 //
-//   mermaid  - mermaid's own, used for every diagram type that is not a
-//              flowchart (sequence, ER, state, pie, gantt, ...) and as the
+//   mermaid  - mermaid's own, used for every diagram type the other one does
+//              not cover (sequence, state, class, gantt, pie, ...) and as the
 //              fallback whenever the other one cannot do the job.
 //
-//   clean    - flowcharts only. Mermaid parses the source, ELK lays it out,
-//              and this file draws the result.
+//   clean    - flowcharts and ER diagrams. Mermaid parses the source, ELK lays
+//              it out, and this file draws the result.
 //
-// Why not just use mermaid for flowcharts too: mermaid lays flowcharts out
-// with dagre and routes edges as curves, which on a dense chart produces
-// crossing arcs and edge labels dropped wherever they happen to land - often
-// on top of each other, or nearer a stranger's arc than their own. The reader
-// then cannot tell which text belongs to which arrow, which is the one thing
-// that makes a dense flowchart unreadable.
+// Why not just use mermaid for flowcharts: mermaid lays them out with dagre and
+// routes edges as curves, which on a dense chart produces crossing arcs and edge
+// labels dropped wherever they happen to land - often on top of each other, or
+// nearer a stranger's arc than their own. The reader then cannot tell which text
+// belongs to which arrow, which is the one thing that makes a dense flowchart
+// unreadable.
 //
 // ELK's layered algorithm fixes that at the source, in three ways:
 //   - orthogonal routing: arcs run in straight lines with right-angle bends
@@ -30,7 +30,16 @@
 // pair while dimming everything else. Between the two, "which arrow is this
 // text on" stops being a guess.
 //
-// None of this is required. With no ELK on the page every flowchart renders
+// ER diagrams have both of those problems - mermaid routes relationships as
+// curves and drops the role name near the middle - plus one of their own: an
+// entity is a table, and drawing it as a grid of equal cells means nothing
+// lines up, so every attribute has to be read word by word. They come through
+// the same pipeline because mermaid hands back the same shape of model for
+// both, and the entity is drawn as a real table: type and name in columns, the
+// keys pinned to the right edge so PK/FK/UK form a column of their own, and a
+// crow's foot at each end of every relationship.
+//
+// None of this is required. With no ELK on the page every diagram renders
 // through mermaid, and the reader can switch any single diagram back to
 // mermaid's layout from the diagram itself.
 
@@ -108,8 +117,9 @@ export const DIAGRAMS_JS = String.raw`
      diagram laid out against the wrong one comes out loose. */
 
   var cv = document.createElement('canvas').getContext('2d');
-  function fontString(px){
-    return px + 'px ' + (getComputedStyle(document.body).fontFamily || 'sans-serif');
+  function fontString(px, weight){
+    return (weight ? weight + ' ' : '') + px + 'px ' +
+      (getComputedStyle(document.body).fontFamily || 'sans-serif');
   }
   function decode(s){
     var t = document.createElement('textarea');
@@ -122,8 +132,8 @@ export const DIAGRAMS_JS = String.raw`
     });
     return out.length ? out : [''];
   }
-  function measure(label, px, maxw){
-    cv.font = fontString(px);
+  function measure(label, px, maxw, weight){
+    cv.font = fontString(px, weight);
     var raw = splitLabel(label), out = [];
     for (var i=0;i<raw.length;i++){
       var line = raw[i];
@@ -149,7 +159,84 @@ export const DIAGRAMS_JS = String.raw`
   var PAD_X = 16, PAD_Y = 11;
   var DIRS = { TB:'DOWN', TD:'DOWN', BT:'UP', LR:'RIGHT', RL:'LEFT' };
 
+  // An entity box is several times the size of a flowchart node, so an ER chart
+  // is laid out to its own spacing profile: wider apart across a layer, and
+  // slightly tighter between layers, because the gap between two entities is
+  // dominated by the relationship label rather than by this number. (See the
+  // edge labels in buildGraph for why.)
+  var SPACING = {
+    flow: { node:'40', layer:'54', edgeNode:'22', edgeNodeLayer:'24',
+            edgeEdge:'16', edgeEdgeLayer:'14', pad:'14' },
+    er:   { node:'58', layer:'50', edgeNode:'34', edgeNodeLayer:'36',
+            edgeEdge:'20', edgeEdgeLayer:'18', pad:'18' }
+  };
+
+  /* ------------------------------------------------------------ entity box
+     An ER entity is not a labelled box, it is a small table, and drawing it
+     as one run of text per attribute is what makes mermaid's ER diagrams hard
+     to read: nothing lines up, so every row has to be parsed word by word.
+     Here the attributes are measured as real columns - type, name, comment,
+     and the keys pinned to the right edge - so PK/FK/UK form a column of their
+     own and the eye can scan down one of them instead of reading all of it. */
+
+  var ER_TITLE_FS = 13, ER_FS = 11.6, ER_KEY_FS = 9.4;
+  var ER_PAD = 13, ER_ROW_H = 21, ER_COL_GAP = 15, ER_HEAD_PAD = 9;
+  var ER_BADGE_H = 14, ER_BADGE_PAD = 5, ER_BADGE_GAP = 4;
+  // How much clear line a cardinality glyph needs at the end of a relationship.
+  var ER_END_CLEAR = 22;
+
+  // Measured once and cached on the node, so the box drawn is the box the
+  // layout was given room for - the two must not be allowed to disagree.
+  function erModel(n){
+    if (n._er) return n._er;
+    var title = measure(n.alias || n.label, ER_TITLE_FS, 340, 600);
+    var rows = (n.attributes || []).map(function(a){
+      return {
+        type: decode(a.type == null ? '' : a.type).trim(),
+        name: decode(a.name == null ? '' : a.name).trim(),
+        comment: decode(a.comment == null ? '' : a.comment).trim(),
+        keys: (a.keys || []).filter(Boolean).map(function(k){ return String(k).toUpperCase(); })
+      };
+    });
+
+    cv.font = fontString(ER_FS);
+    var wType = 0, wName = 0, wCom = 0;
+    rows.forEach(function(r){
+      if (r.type) wType = Math.max(wType, cv.measureText(r.type).width);
+      if (r.name) wName = Math.max(wName, cv.measureText(r.name).width);
+      if (r.comment) wCom = Math.max(wCom, cv.measureText(r.comment).width);
+    });
+    wType = Math.ceil(wType); wName = Math.ceil(wName); wCom = Math.ceil(wCom);
+
+    cv.font = fontString(ER_KEY_FS, 600);
+    var wKey = 0;
+    rows.forEach(function(r){
+      var w = 0;
+      r.badges = r.keys.map(function(k){
+        var bw = Math.ceil(cv.measureText(k).width) + ER_BADGE_PAD * 2;
+        w += bw + (w ? ER_BADGE_GAP : 0);
+        return { text: k, w: bw, pk: k === 'PK' };
+      });
+      r.keyW = w;
+      wKey = Math.max(wKey, w);
+    });
+
+    var xName = ER_PAD + (wType ? wType + ER_COL_GAP : 0);
+    var xCom = xName + wName + ER_COL_GAP;
+    var contentW = (wCom ? xCom + wCom : xName + wName) +
+                   (wKey ? ER_COL_GAP + wKey : 0) + ER_PAD;
+    var headH = Math.ceil(title.h + ER_HEAD_PAD * 2) + (rows.length ? 0 : 4);
+
+    n._er = {
+      title: title, rows: rows, headH: headH, xType: ER_PAD, xName: xName, xCom: xCom,
+      w: Math.round(Math.max(contentW, title.w + ER_PAD * 2 + 14, 104)),
+      h: Math.round(headH + (rows.length ? rows.length * ER_ROW_H + 5 : 0))
+    };
+    return n._er;
+  }
+
   function nodeSize(n){
+    if (n.shape === 'erBox'){ var e = erModel(n); return { w: e.w, h: e.h }; }
     var m = measure(n.label, NODE_FS, CFG.nodeTextWidth || 210);
     n._m = m;
     var w = m.w + PAD_X*2, h = m.h + PAD_Y*2;
@@ -168,6 +255,7 @@ export const DIAGRAMS_JS = String.raw`
   }
 
   function buildGraph(data, dir){
+    var sp = data.__er ? SPACING.er : SPACING.flow;
     var kids = {};
     data.nodes.forEach(function(n){
       var p = n.parentId || '__root';
@@ -191,12 +279,21 @@ export const DIAGRAMS_JS = String.raw`
       return { id: n.id, width: s.w, height: s.h, _n: n };
     }
 
+    var horiz = dir === 'RIGHT' || dir === 'LEFT';
     var edges = data.edges.map(function(e){
       var ed = { id: e.id, sources: [e.start], targets: [e.end], _e: e };
       if (e.label != null && String(e.label).trim() !== ''){
         var m = measure(e.label, EDGE_FS, CFG.edgeTextWidth || 200);
         e._m = m;
-        ed.labels = [{ id: e.id + '::label', text: 'x', width: m.w + 12, height: m.h + 4 }];
+        e._lw = m.w + 12;
+        e._lh = m.h + 4;
+        // ELK decides the gap around a centred edge label from the label box and
+        // nothing else - not from the layer spacing - so the clear line the two
+        // crow's feet need is reserved here, as part of the box, and the plate is
+        // then drawn at its own size in the middle of it.
+        var clear = data.__er ? ER_END_CLEAR * 2 : 0;
+        ed.labels = [{ id: e.id + '::label', text: 'x',
+          width: e._lw + (horiz ? clear : 0), height: e._lh + (horiz ? 0 : clear) }];
       }
       return ed;
     });
@@ -217,16 +314,16 @@ export const DIAGRAMS_JS = String.raw`
         'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
         'elk.layered.thoroughness': '30',
         'elk.layered.mergeEdges': 'false',
-        'elk.spacing.nodeNode': '40',
-        'elk.layered.spacing.nodeNodeBetweenLayers': '54',
-        'elk.spacing.edgeNode': '22',
-        'elk.layered.spacing.edgeNodeBetweenLayers': '24',
-        'elk.spacing.edgeEdge': '16',
-        'elk.layered.spacing.edgeEdgeBetweenLayers': '14',
+        'elk.spacing.nodeNode': sp.node,
+        'elk.layered.spacing.nodeNodeBetweenLayers': sp.layer,
+        'elk.spacing.edgeNode': sp.edgeNode,
+        'elk.layered.spacing.edgeNodeBetweenLayers': sp.edgeNodeLayer,
+        'elk.spacing.edgeEdge': sp.edgeEdge,
+        'elk.layered.spacing.edgeEdgeBetweenLayers': sp.edgeEdgeLayer,
         'elk.spacing.edgeLabel': '7',
         'elk.spacing.labelNode': '10',
         'elk.edgeLabels.placement': 'CENTER',
-        'elk.padding': '[top=14,left=14,bottom=14,right=14]'
+        'elk.padding': '[top='+sp.pad+',left='+sp.pad+',bottom='+sp.pad+',right='+sp.pad+']'
       }
     };
   }
@@ -324,6 +421,69 @@ export const DIAGRAMS_JS = String.raw`
     return g;
   }
 
+  // The entity, drawn as a table. The header band is a path rather than a rect
+  // so that only its top corners are rounded, and it is a wash laid over the
+  // body rather than an opaque fill, so a classDef colour on the entity still
+  // reads through it - and so the hover tint reaches the header too.
+  function erBoxEl(g, a, n, st){
+    var m = erModel(n), x = a.x, y = a.y, w = a.w, h = a.h, r = 9;
+
+    var body = mk('rect', { x:x, y:y, width:w, height:h, rx:r, ry:r }, 'dg-node-shape');
+    if (st.fill) body.style.fill = st.fill;
+    if (st.stroke) body.style.stroke = st.stroke;
+    if (st['stroke-width']) body.style.strokeWidth = st['stroke-width'];
+    if (st['stroke-dasharray']) body.style.strokeDasharray = st['stroke-dasharray'];
+    g.appendChild(body);
+
+    if (m.rows.length){
+      g.appendChild(mk('path', { d:
+        'M'+x+','+(y+m.headH)+' V'+(y+r)+' A'+r+','+r+' 0 0 1 '+(x+r)+','+y+
+        ' H'+(x+w-r)+' A'+r+','+r+' 0 0 1 '+(x+w)+','+(y+r)+' V'+(y+m.headH)+' Z'
+      }, 'dg-er-head'));
+      var rule = mk('line', { x1:x, y1:y+m.headH, x2:x+w, y2:y+m.headH }, 'dg-er-rule');
+      if (st.stroke) rule.style.stroke = st.stroke;
+      g.appendChild(rule);
+    }
+
+    var t = textBlock(m.title, x + w/2, y + m.headH/2, 'dg-er-title');
+    if (st.color) t.style.fill = st.color;
+    g.appendChild(t);
+
+    m.rows.forEach(function(row, i){
+      var top = y + m.headH + i * ER_ROW_H, cy = top + ER_ROW_H/2;
+      var rg = mk('g', null, 'dg-er-row');
+      // a band under the row, lit on hover: on a wide entity it is what keeps
+      // the eye on one line while it travels from the type across to the keys
+      var last = i === m.rows.length - 1, rr = r - 1, x1 = x + 1, x2 = x + w - 1, y2 = y + h - 1;
+      rg.appendChild(last
+        ? mk('path', { d: 'M'+x1+','+top+' H'+x2+' V'+(y2-rr)+' A'+rr+','+rr+' 0 0 1 '+(x2-rr)+','+y2+
+                          ' H'+(x1+rr)+' A'+rr+','+rr+' 0 0 1 '+x1+','+(y2-rr)+' Z' }, 'dg-er-band')
+        : mk('rect', { x:x1, y:top, width:w-2, height:ER_ROW_H }, 'dg-er-band'));
+      if (i) rg.appendChild(mk('line', { x1:x+ER_PAD, y1:top, x2:x+w-ER_PAD, y2:top }, 'dg-er-sep'));
+
+      var put = function(text, tx, cls){
+        if (!text) return;
+        var e = mk('text', { x:tx, y:cy, 'text-anchor':'start' }, cls);
+        e.textContent = text;
+        rg.appendChild(e);
+      };
+      put(row.type, x + m.xType, 'dg-er-type');
+      put(row.name, x + m.xName, 'dg-er-name');
+      put(row.comment, x + m.xCom, 'dg-er-comment');
+
+      var bx = x + w - ER_PAD - row.keyW;
+      row.badges.forEach(function(b){
+        rg.appendChild(mk('rect', { x:bx, y:cy - ER_BADGE_H/2, width:b.w, height:ER_BADGE_H, rx:4 },
+          'dg-er-badge' + (b.pk ? ' is-pk' : '')));
+        var bt = mk('text', { x:bx + b.w/2, y:cy, 'text-anchor':'middle' }, 'dg-er-key');
+        bt.textContent = b.text;
+        rg.appendChild(bt);
+        bx += b.w + ER_BADGE_GAP;
+      });
+      g.appendChild(rg);
+    });
+  }
+
   // Right-angle bends look mechanical when they are exactly square; a small
   // radius reads as a route rather than as a staircase.
   function roundedPath(pts, r){
@@ -380,7 +540,45 @@ export const DIAGRAMS_JS = String.raw`
 
   var ARROW = { arrow_point:'tri', double_arrow_point:'tri', arrow_circle:'dot', arrow_cross:'cross' };
 
+  // Crow's-foot cardinality, drawn at the entity end of a relationship. The
+  // mermaid source reads outwards from the entity - in "A }o--|| B" the "}"
+  // is the mark nearest A and the "o" the one beyond it - so the glyphs are
+  // placed in that order, stepping back along the line from the box edge.
+  // Like arrowheads these are drawn into the edge's own group rather than as
+  // shared <marker>s, so one CSS rule lights a glyph along with its line.
+  var CARDS = { only_one:1, zero_or_one:1, one_or_more:1, zero_or_more:1, md_parent:1 };
+
+  function erMarker(tip, from, card){
+    if (!CARDS[card]) return null;
+    var dx = tip.x - from.x, dy = tip.y - from.y, L = Math.hypot(dx, dy) || 1;
+    var ux = dx/L, uy = dy/L, px = -uy, py = ux;
+    var g = mk('g', null, 'dg-card');
+    var at = function(d){ return { x: tip.x - ux*d, y: tip.y - uy*d }; };
+    var bar = function(d){
+      var c = at(d);
+      g.appendChild(mk('line', { x1:c.x+px*5.6, y1:c.y+py*5.6, x2:c.x-px*5.6, y2:c.y-py*5.6 }, 'dg-card-line'));
+    };
+    var ring = function(d){
+      var c = at(d);
+      g.appendChild(mk('circle', { cx:c.x, cy:c.y, r:3.5 }, 'dg-card-ring'));
+    };
+    // the middle prong of the foot is the edge line itself; only the two
+    // spread prongs have to be drawn
+    var foot = function(){
+      var apex = at(10.5);
+      g.appendChild(mk('line', { x1:apex.x, y1:apex.y, x2:tip.x+px*7, y2:tip.y+py*7 }, 'dg-card-line'));
+      g.appendChild(mk('line', { x1:apex.x, y1:apex.y, x2:tip.x-px*7, y2:tip.y-py*7 }, 'dg-card-line'));
+    };
+    if (card === 'only_one'){ bar(5.5); bar(10.5); }
+    else if (card === 'zero_or_one'){ bar(5.5); ring(12.5); }
+    else if (card === 'one_or_more'){ foot(); bar(15); }
+    else if (card === 'zero_or_more'){ foot(); ring(17.5); }
+    else g.appendChild(mk('circle', { cx: at(4).x, cy: at(4).y, r:3.4 }, 'dg-card-dot'));
+    return g;
+  }
+
   function drawSvg(res, data){
+    var isEr = !!data.__er;
     var abs = absolutise(res);
     var W = Math.max(1, Math.ceil(res.width)), H = Math.max(1, Math.ceil(res.height));
     var svg = mk('svg', { viewBox:'0 0 '+W+' '+H, width:W, height:H, role:'img' }, 'dg');
@@ -409,7 +607,8 @@ export const DIAGRAMS_JS = String.raw`
       var a = abs[id], n = a.n;
       if (!n || n.isGroup) return;
       var st = styleOf(n);
-      var g = mk('g', { 'data-node': id }, 'dg-el dg-node');
+      var g = mk('g', { 'data-node': id }, 'dg-el dg-node' + (n.shape === 'erBox' ? ' dg-er' : ''));
+      if (n.shape === 'erBox'){ erBoxEl(g, a, n, st); gNode.appendChild(g); return; }
       var s = shapeEl(a.x, a.y, a.w, a.h, n.shape);
       s.setAttribute('class', 'dg-node-shape');
       if (st.fill) s.style.fill = st.fill;
@@ -442,22 +641,33 @@ export const DIAGRAMS_JS = String.raw`
         var d = roundedPath(pts, 7);
         g.appendChild(mk('path', { d:d, fill:'none' }, 'dg-edge-hit'));
         var line = mk('path', { d:d, fill:'none' }, 'dg-edge-line');
-        if (info.pattern === 'dotted' || info.stroke === 'dotted') line.style.strokeDasharray = '4 3';
+        if (info.pattern === 'dashed') line.style.strokeDasharray = '7 4';
+        else if (info.pattern === 'dotted' || info.stroke === 'dotted') line.style.strokeDasharray = '4 3';
         if (info.thickness === 'thick' || info.stroke === 'thick') line.style.strokeWidth = '2.4';
         if (st.stroke) line.style.stroke = st.stroke;
         g.appendChild(line);
 
         if (i === runs.length - 1){
-          var head = info.arrowTypeEnd === 'none' || info.type === 'arrow_open'
-            ? null : (ARROW[info.arrowTypeEnd] || 'tri');
-          if (head){
-            var a = arrowHead(pts[pts.length-1], pts[pts.length-2], head);
-            if (st.stroke){ a.style.fill = head === 'tri' ? st.stroke : ''; a.style.stroke = st.stroke; }
-            g.appendChild(a);
+          if (isEr){
+            var me = erMarker(pts[pts.length-1], pts[pts.length-2], info.arrowTypeEnd);
+            if (me) g.appendChild(me);
+          } else {
+            var head = info.arrowTypeEnd === 'none' || info.type === 'arrow_open'
+              ? null : (ARROW[info.arrowTypeEnd] || 'tri');
+            if (head){
+              var a = arrowHead(pts[pts.length-1], pts[pts.length-2], head);
+              if (st.stroke){ a.style.fill = head === 'tri' ? st.stroke : ''; a.style.stroke = st.stroke; }
+              g.appendChild(a);
+            }
           }
         }
-        if (i === 0 && info.arrowTypeStart && info.arrowTypeStart !== 'none'){
-          g.appendChild(arrowHead(pts[0], pts[1], ARROW[info.arrowTypeStart] || 'tri'));
+        if (i === 0){
+          if (isEr){
+            var ms = erMarker(pts[0], pts[1], info.arrowTypeStart);
+            if (ms) g.appendChild(ms);
+          } else if (info.arrowTypeStart && info.arrowTypeStart !== 'none'){
+            g.appendChild(arrowHead(pts[0], pts[1], ARROW[info.arrowTypeStart] || 'tri'));
+          }
         }
       });
       gEdge.appendChild(g);
@@ -468,12 +678,13 @@ export const DIAGRAMS_JS = String.raw`
         if (!m) return;
         var pts = runs[Math.floor(runs.length/2)] || runs[0];
         var lg = mk('g', { 'data-edge': e.id, 'data-src': src, 'data-dst': dst }, 'dg-el dg-label');
-        var lx = lb.x + o.x, ly = lb.y + o.y;
-        var cx = lx + lb.width/2, cy = ly + lb.height/2;
+        var cx = lb.x + o.x + lb.width/2, cy = lb.y + o.y + lb.height/2;
+        var pw = info._lw || lb.width, ph = info._lh || lb.height;
+        var lx = cx - pw/2, ly = cy - ph/2;
         var anchor = pts.length > 1 ? nearestOnPath(pts, cx, cy) : null;
         if (anchor){
           var dx = anchor.x - cx, dy = anchor.y - cy;
-          var hw = lb.width/2 + 3, hh = lb.height/2 + 3, ax = cx, ay = cy;
+          var hw = pw/2 + 3, hh = ph/2 + 3, ax = cx, ay = cy;
           if (dx || dy){
             var t = Math.min(Math.abs(dx) > 1e-6 ? hw/Math.abs(dx) : 1e9,
                              Math.abs(dy) > 1e-6 ? hh/Math.abs(dy) : 1e9);
@@ -484,7 +695,7 @@ export const DIAGRAMS_JS = String.raw`
           }
           lg.appendChild(mk('circle', { cx:anchor.x, cy:anchor.y, r:2.3 }, 'dg-tie-dot'));
         }
-        lg.appendChild(mk('rect', { x:lx, y:ly, width:lb.width, height:lb.height, rx:5 }, 'dg-label-plate'));
+        lg.appendChild(mk('rect', { x:lx, y:ly, width:pw, height:ph, rx:5 }, 'dg-label-plate'));
         lg.appendChild(textBlock(m, cx, cy, 'dg-edge-text'));
         gLabel.appendChild(lg);
       });
@@ -495,9 +706,13 @@ export const DIAGRAMS_JS = String.raw`
 
   /* --------------------------------------------------------------- render */
 
-  function isFlowchart(code){
+  // Both of the types the clean renderer draws. Everything else - sequence,
+  // state, class, gantt, pie - goes to mermaid, which draws them well.
+  var CLEAN_KINDS = { flowchart:'flowchart', graph:'flowchart', erdiagram:'er' };
+
+  function cleanKind(code){
     var head = String(code).replace(/^\s*(%%\{[\s\S]*?\}%%\s*)*/, '').trim().split(/[\s\n]/)[0] || '';
-    return /^(flowchart|graph)$/i.test(head);
+    return CLEAN_KINDS[head.toLowerCase()] || null;
   }
 
   function canClean(){
@@ -505,7 +720,7 @@ export const DIAGRAMS_JS = String.raw`
            mermaid.mermaidAPI && typeof mermaid.mermaidAPI.getDiagramFromText === 'function';
   }
 
-  function renderClean(fig, code){
+  function renderClean(fig, code, kind){
     if (!initMermaid()) return Promise.reject(new Error('mermaid unavailable'));
     if (!elk) elk = new ELK();
     return Promise.resolve(mermaid.mermaidAPI.getDiagramFromText(code)).then(function(d){
@@ -513,15 +728,23 @@ export const DIAGRAMS_JS = String.raw`
       if (!db || typeof db.getData !== 'function') throw new Error('no graph model');
       var data = db.getData();
       if (!data || !data.nodes || !data.nodes.length) throw new Error('nothing to draw');
+      // Flowcharts and ER diagrams hand back the same shape of model, which is
+      // why one layout and one drawing pass serve both; only the sizes, the
+      // end marks and the box itself differ.
+      data.__er = kind === 'er';
       var raw = (db.getDirection && db.getDirection()) || 'TB';
       return elk.layout(buildGraph(data, DIRS[String(raw).toUpperCase()] || 'DOWN')).then(function(res){
         var out = fig.querySelector('.diagram-out');
         out.textContent = '';
         out.appendChild(drawSvg(res, data));
         var note = fig.querySelector('.diagram-note');
-        if ((data.edges || []).length >= 6){
+        // An ER chart turns dense sooner: entities are big, so fewer of them
+        // fill the frame and the relationships start crossing earlier.
+        if ((data.edges || []).length >= (data.__er ? 4 : 6)){
           if (!note){ note = el('div','diagram-note'); fig.appendChild(note); }
-          note.textContent = 'Hover an arrow or a box to isolate it · click to pin · Esc to release';
+          note.textContent = data.__er
+            ? 'Hover a relationship or an entity to isolate it · click to pin · Esc to release'
+            : 'Hover an arrow or a box to isolate it · click to pin · Esc to release';
         } else if (note) note.remove();
       });
     });
@@ -531,14 +754,14 @@ export const DIAGRAMS_JS = String.raw`
   // mind: a switch lasts as long as the page is open and no longer. The
   // project-wide default is a config setting, where it can be reviewed.
   function engineFor(fig, code){
-    if (!isFlowchart(code)) return 'mermaid';
+    if (!cleanKind(code)) return 'mermaid';
     return fig.dataset.engine || CFG.engine || 'clean';
   }
 
   function paintButton(fig, code, used){
     var btn = fig.querySelector('[data-act="engine"]');
     if (!btn) return;
-    btn.textContent = (isFlowchart(code) && canClean())
+    btn.textContent = (cleanKind(code) && canClean())
       ? (used === 'clean' ? 'Mermaid layout' : 'Clean layout') : '';
   }
 
@@ -547,9 +770,10 @@ export const DIAGRAMS_JS = String.raw`
     var want = force || engineFor(fig, code);
     if (fig.dataset.drawn === want) return Promise.resolve();
     fig.dataset.drawn = want;
+    var kind = cleanKind(code);
     var done;
-    if (want === 'clean' && canClean()){
-      done = renderClean(fig, code).catch(function(){
+    if (want === 'clean' && kind && canClean()){
+      done = renderClean(fig, code, kind).catch(function(){
         // Anything the clean renderer cannot do is mermaid's job, quietly.
         fig.dataset.drawn = 'mermaid';
         var note = fig.querySelector('.diagram-note');

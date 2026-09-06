@@ -40,8 +40,9 @@ const DEFAULTS = {
   // to fix the order; anything not listed follows, alphabetically.
   groupOrder: [],
   diagrams: {
-    // 'clean'   - re-lay flowcharts out with ELK: right-angled routes, every
-    //             edge label given its own reserved space and tied to its arc.
+    // 'clean'   - re-lay flowcharts and ER diagrams out with ELK: right-angled
+    //             routes, every edge label given its own reserved space and tied
+    //             to its arc, and entities drawn as tables rather than grids.
     // 'mermaid' - mermaid's own renderer for everything.
     // Either way the reader can switch per diagram from the page.
     engine: 'clean',

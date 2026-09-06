@@ -9,7 +9,7 @@
 //   docucane --no-open          build only
 //   docucane --out <dir>        write somewhere else
 //   docucane --refresh          re-download the vendored assets
-//   docucane --engine mermaid   default flowcharts to mermaid's layout
+//   docucane --engine mermaid   default every diagram to mermaid's layout
 //   docucane init [dir]         wire a project up
 //
 // Output: <out>/index.html plus a vendor/ folder. The page is plain file://
@@ -44,7 +44,7 @@ Options
   --out <dir>        where to write the page          (default .docucane)
   --config <file>    use this config file             (default docs.config.json, searched upwards)
   --title <name>     override the dashboard title
-  --engine <name>    default flowchart layout: clean | mermaid
+  --engine <name>    default diagram layout: clean | mermaid
   --no-open          build without launching a browser
   --refresh          re-download mermaid, ELK and the font
   -h, --help         this

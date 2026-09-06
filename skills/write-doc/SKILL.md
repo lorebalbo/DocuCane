@@ -37,9 +37,9 @@ Prefer `flowchart TD`; use whatever Mermaid type fits (sequence, state, ER). Lab
 the *user* does or sees, quote every label, and use `<br/>` for line breaks. A reader with no
 technical background must be able to follow it.
 
-The dashboard re-lays flowcharts out with ELK, which routes edges at right angles and reserves
-space for every edge label, so a dense chart stays readable without hand-tuning. Two things still
-help it:
+The dashboard re-lays flowcharts and ER diagrams out with ELK, which routes edges at right angles
+and reserves space for every edge label, so a dense chart stays readable without hand-tuning. Two
+things still help it:
 
 - **Name the transition, not the mechanism.** `-->|"tap Save"|` reads; `-->|"POST /songs"|` does not.
 - **Keep an edge label short.** One short phrase, or two lines split with `<br/>`. A label longer
@@ -47,6 +47,16 @@ help it:
 
 Do not hand-place nodes, add `linkStyle`, or otherwise fight the layout: the dashboard lays the
 chart out itself, and those directives only affect the mermaid fallback.
+
+For an `erDiagram`, the entity is drawn as a table with the keys pinned to its right edge, so:
+
+- **Give the attributes** in a `{ ... }` block whenever the diagram is about a schema. An entity
+  with no block is drawn as a plain named box — right for a diagram about how things relate, wrong
+  for one about what is stored.
+- **Mark the keys** as mermaid spells them — `PK`, `FK`, `UK`, comma-separated for more than one
+  (`uuid song_id PK,FK`) — and quote a comment: `string note "free text"`.
+- **Name the role in the reader's words.** `SONG ||--o{ RECORDING : holds` reads;
+  `: fk_recording_song` does not.
 
 ## Shape
 

@@ -1,7 +1,7 @@
 {
   "name": "docucane",
   "version": "1.0.0",
-  "description": "Render a folder of Markdown into one self-contained documentation dashboard, with flowcharts that stay readable when they get dense.",
+  "description": "Render a folder of Markdown into one self-contained documentation dashboard, with flowcharts and ER diagrams that stay readable when they get dense.",
   "type": "module",
   "bin": {
     "docucane": "bin/docucane.mjs"
@@ -29,6 +29,7 @@
     "mermaid",
     "elk",
     "flowchart",
+    "er-diagram",
     "static-site",
     "offline"
   ],

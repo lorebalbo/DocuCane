@@ -22,6 +22,12 @@ html{-webkit-text-size-adjust:100%}
   /* diagrams */
   --dg-node:#fff; --dg-node-line:#c3c9d4; --dg-edge:#8a91a0; --dg-edge-text:#5f6674;
   --dg-group:#f7f8fa; --dg-group-line:#dfe3ea; --dg-hot:#1b56d6; --dg-hot-soft:#eaf0fd;
+  /* entity tables: the header band and the row hover are washes laid over the
+     box, so a classDef colour on an entity still reads through them */
+  --dg-er-head:rgba(20,26,38,.045); --dg-er-head-hot:rgba(27,86,214,.07);
+  --dg-er-line:#e7eaf0; --dg-er-hover:rgba(27,86,214,.11);
+  --dg-er-badge:#eef0f4; --dg-er-badge-line:#dce0e8; --dg-er-badge-ink:#5f6674;
+  --dg-er-badge-pk:#dfe4ee; --dg-er-badge-pk-line:#c8d0dd;
 }
 body{margin:0;background:var(--bg);color:var(--ink);
   font:15px/1.7 var(--font);
@@ -321,6 +327,36 @@ svg.dg .dg-el.is-hot,svg.dg .dg-el.is-near{opacity:1}
    question being asked - but left unfilled, so which box the pointer is on stays
    obvious. Both tiers are fully opaque; only the untouched rest fades. */
 .dg-el.is-near .dg-node-shape{stroke:var(--dg-hot);stroke-width:1.5}
+
+/* ---- entities ----
+   The reason ER gets the same treatment as flowcharts: mermaid draws an entity
+   as a stack of text, so nothing lines up and every row has to be read in full.
+   Here it is a table - the type column, the name column, and the keys pinned
+   right - which is what lets the eye scan one column instead of all of them. */
+.dg-er-head{fill:var(--dg-er-head);stroke:none;pointer-events:none}
+.dg-er-rule{stroke:var(--dg-node-line);stroke-width:1}
+.dg-er-sep{stroke:var(--dg-er-line);stroke-width:.8}
+.dg-er-title{fill:var(--ink);font-size:13px;font-weight:600;letter-spacing:-.004em}
+.dg-er-type{fill:var(--muted);font-size:11.6px}
+.dg-er-name{fill:var(--ink);font-size:11.6px}
+.dg-er-comment{fill:var(--faint);font-size:11.6px;font-style:italic}
+.dg-er-badge{fill:var(--dg-er-badge);stroke:var(--dg-er-badge-line);stroke-width:.8}
+.dg-er-badge.is-pk{fill:var(--dg-er-badge-pk);stroke:var(--dg-er-badge-pk-line)}
+.dg-er-key{fill:var(--dg-er-badge-ink);font-size:9.4px;font-weight:600;letter-spacing:.02em}
+/* on a wide entity the band is what keeps the eye on one row while it travels
+   from the type on the left across to the keys on the right */
+.dg-er-band{fill:transparent;transition:fill .12s ease}
+.dg-er-row:hover .dg-er-band{fill:var(--dg-er-hover)}
+
+/* crow's feet: line-drawn like the arrowheads, and lit by the same rules, so a
+   relationship and both of its cardinalities light as one thing */
+.dg-card-line{fill:none;stroke:var(--dg-edge);stroke-width:1.3;stroke-linecap:round}
+.dg-card-ring{fill:var(--surface);stroke:var(--dg-edge);stroke-width:1.3}
+.dg-card-dot{fill:var(--dg-edge);stroke:none}
+.dg-el.is-hot .dg-card-line{stroke:var(--dg-hot);stroke-width:1.8}
+.dg-el.is-hot .dg-card-ring{stroke:var(--dg-hot);stroke-width:1.8}
+.dg-el.is-hot .dg-card-dot{fill:var(--dg-hot)}
+.dg-el.is-hot .dg-er-head{fill:var(--dg-er-head-hot)}
 @media print{svg.dg.has-hot .dg-el{opacity:1}}
 `;
 
