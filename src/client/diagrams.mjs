@@ -3,11 +3,12 @@
 // Two renderers live here.
 //
 //   mermaid  - mermaid's own, used for every diagram type the other one does
-//              not cover (sequence, state, class, gantt, pie, ...) and as the
-//              fallback whenever the other one cannot do the job.
+//              not cover (state, class, gantt, pie, ...) and as the fallback
+//              whenever the other one cannot do the job.
 //
-//   clean    - flowcharts and ER diagrams. Mermaid parses the source, ELK lays
-//              it out, and this file draws the result.
+//   clean    - flowcharts, ER diagrams and sequence diagrams. Mermaid parses
+//              the source, ELK lays a graph out (a sequence is laid out here,
+//              lane by lane), and this file draws the result.
 //
 // Why not just use mermaid for flowcharts: mermaid lays them out with dagre and
 // routes edges as curves, which on a dense chart produces crossing arcs and edge
@@ -121,9 +122,13 @@ export const DIAGRAMS_JS = String.raw`
     return (weight ? weight + ' ' : '') + px + 'px ' +
       (getComputedStyle(document.body).fontFamily || 'sans-serif');
   }
+  // Mermaid parks its own entity codes (#35; #quot;) behind placeholders while
+  // it parses and only puts them back when it draws; the parsed model still
+  // carries the placeholders, so they are put back here first.
   function decode(s){
     var t = document.createElement('textarea');
-    t.innerHTML = String(s == null ? '' : s);
+    t.innerHTML = String(s == null ? '' : s)
+      .replace(/ﬂ°°/g, '&#').replace(/ﬂ°/g, '&').replace(/¶ß/g, ';');
     return t.value;
   }
   function splitLabel(label){
@@ -132,19 +137,42 @@ export const DIAGRAMS_JS = String.raw`
     });
     return out.length ? out : [''];
   }
-  function measure(label, px, maxw, weight){
+  // hard: a single word wider than the line - a path, a URL, a dotted table
+  // name - is broken after its own punctuation rather than left to run long,
+  // and a wrapped line is balanced, so it never ends on one stranded word
+  function measure(label, px, maxw, weight, hard){
     cv.font = fontString(px, weight);
     var raw = splitLabel(label), out = [];
+    var fill = function(pieces, width){
+      var lines = [], cur = '';
+      for (var j=0;j<pieces.length;j++){
+        var t = cur ? cur + (pieces[j].glue ? '' : ' ') + pieces[j].t : pieces[j].t;
+        if (cv.measureText(t).width > width && cur){ lines.push(cur); cur = pieces[j].t; }
+        else cur = t;
+      }
+      if (cur) lines.push(cur);
+      return lines;
+    };
     for (var i=0;i<raw.length;i++){
       var line = raw[i];
       if (!maxw || cv.measureText(line).width <= maxw){ out.push(line); continue; }
-      var cur = '', words = line.split(' ');
-      for (var j=0;j<words.length;j++){
-        var t = cur ? cur + ' ' + words[j] : words[j];
-        if (cv.measureText(t).width > maxw && cur){ out.push(cur); cur = words[j]; }
-        else cur = t;
+      var pieces = [];
+      line.split(' ').forEach(function(w){
+        if (hard && cv.measureText(w).width > maxw){
+          w.split(/(?<=[\/._,;:=&?-])/).forEach(function(p, k){ pieces.push({ t:p, glue:k > 0 }); });
+        } else pieces.push({ t:w, glue:false });
+      });
+      var lines = fill(pieces, maxw);
+      if (hard && lines.length > 1){
+        // the narrowest width that still needs no more lines than the greedy fill
+        var lo = cv.measureText(line).width / lines.length, hi = maxw;
+        for (var step=0; step<9 && hi - lo > 2; step++){
+          var mid = (lo + hi)/2;
+          if (fill(pieces, mid).length > lines.length) lo = mid; else hi = mid;
+        }
+        lines = fill(pieces, hi);
       }
-      if (cur) out.push(cur);
+      out.push.apply(out, lines);
     }
     if (!out.length) out.push('');
     var w = 0;
@@ -534,6 +562,12 @@ export const DIAGRAMS_JS = String.raw`
     }
     var back = 8.5, half = 3.4;
     var bx = tip.x - ux*back, by = tip.y - uy*back;
+    if (kind === 'open'){
+      // two strokes and no fill: an asynchronous message in a sequence diagram
+      return mk('path', { d:
+        'M'+(bx+px*(half+.8))+','+(by+py*(half+.8))+' L'+tip.x+','+tip.y+' L'+(bx-px*(half+.8))+','+(by-py*(half+.8)),
+        fill:'none' }, 'dg-head-line');
+    }
     return mk('polygon', { points:
       tip.x+','+tip.y+' '+(bx+px*half)+','+(by+py*half)+' '+(bx-px*half)+','+(by-py*half) }, 'dg-head');
   }
@@ -704,24 +738,765 @@ export const DIAGRAMS_JS = String.raw`
     return svg;
   }
 
+  /* ------------------------------------------------------------- sequence
+     A sequence diagram fails differently. Nothing has to be routed - every
+     message is a straight line across the lanes - so what breaks is width.
+     Mermaid opens each gap between two lifelines until the widest label that
+     crosses it fits, so a diagram whose messages carry real payloads comes out
+     thousands of pixels wide and is then shrunk into the column until none of
+     it can be read. Its frames add their own trouble: the conditions of an alt
+     float loose inside it, and an autonumber is a dot too small for its number.
+
+     Here the lanes are only as far apart as the participants need. A label is
+     wrapped - a path or a URL too, after its own punctuation - and may overhang
+     the ends of its own arrow, but never as far as the next lifeline out, so it
+     still sits over one message and no other; rows then take the height their
+     label needs. Frames are measured from what they hold, each nested one inset
+     in its parent, with the condition beside the keyword and every else, and,
+     or option line named where it falls. Numbers are badges big enough to read,
+     participants repeat at the foot of a long diagram and ride along the top of
+     the page while it scrolls past, and hovering works as it does everywhere
+     else: participants are the nodes and messages are the edges. */
+
+  var SEQ = {
+    fs: 11.5, textW: 220,          // message text, and how wide it runs before wrapping -
+    wraps: [170, 190, 220, 250, 280, 310, 340],   // - chosen from these to suit the room
+    actorFs: 12.5, actorW: 170,    // participant names
+    // when the room is too narrow: [name width, message line width], tried in order
+    squeeze: [[140, 220], [110, 220], [110, 190], [110, 170]],
+    gap: 26,                       // the least clear space between two participant boxes
+    arrow: 96,                     // the shortest arrow between neighbouring lanes
+    maxGap: 300,                   // the widest a gap is opened to fill the room
+    overhang: 62,                  // how far a label may run past either end of its arrow,
+                                   // when the room is too narrow for it to fit its arrow
+    clear: 14,                     // ... and how near it may come to the next lifeline out
+    edge: 16,                      // how far past the first or last lane a label may start
+    plateGap: 5, numGap: 11, rowGap: 15,
+    selfW: 38, selfH: 20,
+    noteExtra: 20, notePad: 10,    // a note runs a little wider than a message label
+    framePad: 12, tabH: 19,
+    bar: 9, badge: 8.5,
+    tall: 420,                     // below this height nothing repeats or floats
+    margin: 14
+  };
+
+  var FRAME_OPEN = { LOOP_START:'loop', ALT_START:'alt', OPT_START:'opt', PAR_START:'par',
+    PAR_OVER_START:'par', CRITICAL_START:'critical', BREAK_START:'break', RECT_START:'rect' };
+  var FRAME_SPLIT = { ALT_ELSE:'else', PAR_AND:'and', CRITICAL_OPTION:'option' };
+  var FRAME_CLOSE = { LOOP_END:1, ALT_END:1, OPT_END:1, PAR_END:1, CRITICAL_END:1, BREAK_END:1, RECT_END:1 };
+
+  // mermaid hands back Maps in some versions and plain objects in others
+  function asObject(m){
+    var o = {};
+    if (m && typeof m.forEach === 'function' && !Array.isArray(m)) m.forEach(function(v, k){ o[k] = v; });
+    else if (m) Object.keys(m).forEach(function(k){ o[k] = m[k]; });
+    return o;
+  }
+
+  function headKind(type){
+    if (/_OPEN$/.test(type)) return null;           // -> and -->: a line with no head
+    if (/CROSS/.test(type)) return 'cross';          // -x
+    if (/POINT$|STICK/.test(type)) return 'open';    // -) : asynchronous
+    return 'tri';                                    // ->> and the rest
+  }
+
+  function kwWidth(word){
+    cv.font = fontString(9.4, 620);
+    return Math.ceil(cv.measureText(word).width + word.length * .5) + 14;
+  }
+
+  function textLeft(m, x, cy, cls){
+    var t = mk('text', { x:x, y:cy, 'text-anchor':'start' }, cls);
+    for (var i=0;i<m.lines.length;i++){
+      var ts = mk('tspan', { x:x, dy: i ? m.lh : 0 });
+      ts.textContent = m.lines[i];
+      t.appendChild(ts);
+    }
+    return t;
+  }
+
+  // avail: the width it will be shown at, in pixels; 0 when not known yet
+  function drawSequence(db, code, avail){
+    var LT = db.LINETYPE, PL = db.PLACEMENT || { LEFTOF:0, RIGHTOF:1, OVER:2 };
+    var typeName = {};
+    Object.keys(LT).forEach(function(k){ typeName[LT[k]] = k; });
+
+    /* --- participants --- */
+
+    var actorMap = asObject(db.getActors());
+    var keys = db.getActorKeys ? db.getActorKeys() : Object.keys(actorMap);
+    var created = asObject(db.getCreatedActors && db.getCreatedActors());
+    var destroyed = asObject(db.getDestroyedActors && db.getDestroyedActors());
+    var actors = keys.map(function(k, i){
+      var a = actorMap[k] || {};
+      return { id:k, i:i, type:a.type || 'participant', label: a.description || k };
+    });
+    if (!actors.length) throw new Error('no participants');
+    var byId = {};
+    actors.forEach(function(a){ byId[a.id] = a; });
+
+    // Fitting the diagram to its room measures the same text at the same few
+    // widths over and over; each answer is kept for the length of this drawing.
+    // (Not longer: the measurements change once the webfont has loaded.)
+    var memo = {};
+    var fit = function(text, px, width, weight){
+      var key = px + '|' + width + '|' + (weight || '') + '|' + text;
+      return memo[key] || (memo[key] = measure(text, px, width, weight, true));
+    };
+
+    // names are measured for a given line width too; every box in the row is as tall as the tallest
+    var headH = 0;
+    var remeasureActors = function(width){
+      actors.forEach(function(a){
+        a.m = fit(a.label, SEQ.actorFs, width, 560);
+        a.w = Math.round(Math.max(a.m.w + PAD_X*2 + (a.type === 'actor' ? 20 : 0), 72));
+      });
+      headH = Math.round(Math.max.apply(null, actors.map(function(a){ return a.m.h; })) + PAD_Y*2 +
+        (actors.some(function(a){ return a.type === 'database'; }) ? 12 : 0));
+    };
+    remeasureActors(SEQ.actorW);
+
+    /* --- the message list, flattened --- */
+
+    var items = [], num = 1, step = 1, numbered = false, count = 0;
+    db.getMessages().forEach(function(m, mi){
+      var t = typeName[m.type] || '';
+      if (t === 'AUTONUMBER'){
+        var o = m.message || {};
+        num = o.start || num;
+        step = o.step || step;
+        numbered = o.visible !== false;
+        return;
+      }
+      if (t === 'NOTE'){
+        if (byId[m.from]) items.push({ kind:'note', from:m.from, to: byId[m.to] ? m.to : m.from,
+                                       place:m.placement, text:m.message });
+        return;
+      }
+      if (t === 'ACTIVE_START' || t === 'ACTIVE_END'){
+        if (byId[m.from]) items.push({ kind: t === 'ACTIVE_START' ? 'on' : 'off', actor:m.from });
+        return;
+      }
+      if (FRAME_OPEN[t]){ items.push({ kind:'open', frame:FRAME_OPEN[t], text:m.message }); return; }
+      if (FRAME_SPLIT[t]){ items.push({ kind:'split', word:FRAME_SPLIT[t], text:m.message }); return; }
+      if (FRAME_CLOSE[t]){ items.push({ kind:'close' }); return; }
+      if (!byId[m.from] || !byId[m.to]) return;
+      count++;
+      items.push({ kind:'msg', id:'m' + mi, from:m.from, to:m.to, type:t, text:m.message,
+        a: byId[m.from].i, b: byId[m.to].i, n: numbered ? num : null,
+        born: created[m.to] === mi ? m.to : created[m.from] === mi ? m.from : null,
+        dies: destroyed[m.to] === mi ? m.to : destroyed[m.from] === mi ? m.from : null });
+      num += step;
+    });
+
+    // labels are measured for a given line width, which the fitting below may change
+    var remeasure = function(width){
+      items.forEach(function(it){
+        if (it.kind === 'msg'){
+          it.m = String(decode(it.text)).trim() ? fit(it.text, SEQ.fs, width) : null;
+          it.pw = it.m ? it.m.w + 14 : 0;
+          it.ph = it.m ? it.m.h + 6 : 0;
+        } else if (it.kind === 'note'){
+          it.m = fit(it.text, SEQ.fs, width + SEQ.noteExtra);
+          it.w = it.m.w + SEQ.notePad*2;
+          it.h = Math.round(it.m.h + SEQ.notePad*1.4);
+        }
+      });
+    };
+    remeasure(SEQ.textW);
+
+    /* --- lanes --- */
+
+    var n = actors.length, X = [0];
+
+    // Where a label's plate starts, between the leftmost lane xl and the
+    // rightmost xr of its message: centred, except on the first or last lane,
+    // where hanging out past the edge of the diagram widens it for nothing -
+    // there the label is moved inwards, over its own arrow.
+    var plateLeft = function(xl, xr, a, b, pw){
+      var left = (xl + xr)/2 - pw/2;
+      if (a === 0 && b === n-1) return left;
+      if (a === 0) left = Math.max(left, xl - SEQ.edge);
+      if (b === n-1) left = Math.min(left, xr + (a === b ? SEQ.selfW + 6 : SEQ.edge) - pw);
+      return left;
+    };
+
+    // The gaps between lanes for one allowance of overhang: each starts as wide
+    // as its two participants need and opens further only where a label asks.
+    var solveGaps = function(overhang){
+      var gap = [];
+      for (var k=0;k<n-1;k++) gap.push(Math.max((actors[k].w + actors[k+1].w)/2 + SEQ.gap, SEQ.arrow));
+      var span = function(a, b){ var s = 0; for (var j=a;j<b;j++) s += gap[j]; return s; };
+      // a shortfall is shared out across every gap the message crosses
+      var widen = function(a, b, need){
+        var have = span(a, b);
+        if (b <= a || have >= need - .5) return false;
+        for (var j=a;j<b;j++) gap[j] += (need - have)/(b - a);
+        return true;
+      };
+      for (var pass=0; pass<8; pass++){
+        var moved = false;
+        items.forEach(function(it){
+          if (it.kind === 'note'){
+            var ni = byId[it.from].i;
+            if (it.place === PL.RIGHTOF && ni < n-1) moved = widen(ni, ni+1, it.w + 12 + SEQ.clear) || moved;
+            if (it.place === PL.LEFTOF && ni > 0) moved = widen(ni-1, ni, it.w + 12 + SEQ.clear) || moved;
+            return;
+          }
+          if (it.kind !== 'msg') return;
+          var a = Math.min(it.a, it.b), b = Math.max(it.a, it.b);
+          if (a !== b){
+            if (it.born) moved = widen(a, b, actors[byId[it.born].i].w/2 + 48) || moved;
+            moved = widen(a, b, it.pw - overhang*2) || moved;
+          }
+          // wherever the label ends up, it stops short of the next lifeline out
+          // (and a message to itself leaves room for its loop, which runs right)
+          var xl = span(0, a), xr = span(0, b), left = plateLeft(xl, xr, a, b, it.pw);
+          if (a > 0) moved = widen(a-1, a, xl - left + SEQ.clear) || moved;
+          if (b < n-1) moved = widen(b, b+1, Math.max(left + it.pw - xr, a === b ? SEQ.selfW + 10 : 0) + SEQ.clear) || moved;
+        });
+        if (!moved) break;
+      }
+      return gap;
+    };
+    var placeLanes = function(gap){
+      X = [0];
+      for (var k=0;k<gap.length;k++) X.push(X[k] + gap[k]);
+      X = X.map(Math.round);
+    };
+    var lane = function(id){ return X[byId[id].i]; };
+
+    var noteSpan = function(it){
+      var xa = lane(it.from), xb = lane(it.to), l, r;
+      if (it.place === PL.LEFTOF){ r = xa - 12; l = r - it.w; }
+      else if (it.place === PL.RIGHTOF){ l = xa + 12; r = l + it.w; }
+      else {
+        var reach = xa === xb ? 0 : 28;
+        l = Math.min(xa, xb) - reach; r = Math.max(xa, xb) + reach;
+        if (r - l < it.w){ var c = (l + r)/2; l = c - it.w/2; r = c + it.w/2; }
+      }
+      return [Math.round(l), Math.round(r)];
+    };
+
+    var extent = function(it){
+      if (it.kind === 'note') return noteSpan(it);
+      if (it.kind === 'on' || it.kind === 'off') return [lane(it.actor) - SEQ.bar, lane(it.actor) + SEQ.bar];
+      if (it.kind !== 'msg') return null;
+      var xa = X[it.a], xb = X[it.b], xl = Math.min(xa, xb), xr = Math.max(xa, xb);
+      var left = plateLeft(xl, xr, Math.min(it.a, it.b), Math.max(it.a, it.b), it.pw);
+      var l = Math.min(xl, left), r = Math.max(xr, left + it.pw);
+      if (it.a === it.b) r = Math.max(r, xa + SEQ.selfW + 6);
+      if (it.n != null){ l = Math.min(l, xa - SEQ.badge - 4); r = Math.max(r, xa + SEQ.badge + 4); }
+      if (it.born){
+        var bx = lane(it.born), bw = byId[it.born].w/2;
+        l = Math.min(l, bx - bw); r = Math.max(r, bx + bw);
+      }
+      return [l, r];
+    };
+
+    /* --- frames: measured from what they hold, each one inside its parent --- */
+
+    // balanced once: an else or an end with no frame to belong to is dropped,
+    // and a frame left open is closed at the end
+    var unclosed = 0;
+    items = items.filter(function(it){
+      if (it.kind === 'open') unclosed++;
+      if (it.kind === 'split' && !unclosed) return false;
+      if (it.kind === 'close'){ if (!unclosed) return false; unclosed--; }
+      return true;
+    });
+    while (unclosed-- > 0) items.push({ kind:'close' });
+
+    var frames = [];
+    var finish = function(f){
+      if (!isFinite(f.l)){ f.l = X[0] - 40; f.r = X[0] + 120; }
+      f.l -= SEQ.framePad; f.r += SEQ.framePad;
+      if (f.frame !== 'rect'){
+        f.kw = f.frame.toUpperCase(); f.kwW = kwWidth(f.kw);
+        var widest = function(text, kwW){
+          return String(decode(text)).trim() ? kwW + Math.min(fit(text, SEQ.fs, 0).w, 300) + 30 : kwW + 16;
+        };
+        var need = widest(f.text, f.kwW);
+        f.splits.forEach(function(s){ s.kw = s.word.toUpperCase(); s.kwW = kwWidth(s.kw); need = Math.max(need, widest(s.text, s.kwW)); });
+        f.r = Math.max(f.r, f.l + need);
+      }
+      if (f.parent){ f.parent.l = Math.min(f.parent.l, f.l); f.parent.r = Math.max(f.parent.r, f.r); }
+    };
+    var buildFrames = function(){
+      var stack = [];
+      frames = [];
+      items.forEach(function(it){
+        if (it.kind === 'open'){
+          it.f = { frame:it.frame, text:it.text, l:Infinity, r:-Infinity, splits:[], parent: stack[stack.length-1] || null };
+          frames.push(it.f);
+          stack.push(it.f);
+          return;
+        }
+        if (it.kind === 'split'){ it.f = stack[stack.length-1]; it.f.splits.push(it); return; }
+        if (it.kind === 'close'){ it.f = stack.pop(); finish(it.f); return; }
+        var e = extent(it), top = stack[stack.length-1];
+        if (e && top){ top.l = Math.min(top.l, e[0]); top.r = Math.max(top.r, e[1]); }
+      });
+    };
+
+    // read from the source: mermaid keeps the title in state shared by every
+    // diagram, and the next one parsed on the page clears it
+    var title = String(decode((String(code || '').match(/^\s*title(?:\s*:\s*|\s+)(.+?)\s*$/m) || [])[1] || '')).trim();
+    var titleM = title ? measure(title, 14, 0, 620) : null;
+    var boxes = (db.getBoxes && db.getBoxes()) || [];
+    var boxTitled = boxes.some(function(b){ return b.name && String(b.name).trim(); });
+
+    // everything that takes horizontal room, for the lanes as they stand
+    var bounds = function(){
+      var minX = Infinity, maxX = -Infinity;
+      var take = function(l, r){ minX = Math.min(minX, l); maxX = Math.max(maxX, r); };
+      actors.forEach(function(a){ take(X[a.i] - a.w/2, X[a.i] + a.w/2); });
+      items.forEach(function(it){ var e = extent(it); if (e) take(e[0], e[1]); });
+      frames.forEach(function(f){ take(f.l, f.r); });
+      var boxRects = boxes.map(function(b){
+        var ids = (b.actorKeys || []).filter(function(id){ return byId[id]; });
+        if (!ids.length) return null;
+        var l = Math.min.apply(null, ids.map(function(id){ return lane(id) - byId[id].w/2; })) - 14;
+        var r = Math.max.apply(null, ids.map(function(id){ return lane(id) + byId[id].w/2; })) + 14;
+        take(l, r);
+        return { b:b, l:l, r:r };
+      }).filter(Boolean);
+      if (titleM) take((minX + maxX)/2 - titleM.w/2, (minX + maxX)/2 + titleM.w/2);
+      return { minX: Math.floor(minX - SEQ.margin), maxX: Math.ceil(maxX + SEQ.margin), boxRects: boxRects };
+    };
+    var widthFor = function(gap){
+      placeLanes(gap);
+      buildFrames();
+      var b = bounds();
+      return b.maxX - b.minX;
+    };
+
+    /* --- using the room there is ---
+       Compact is the fallback, not the aim. Given the width the diagram will be
+       shown at, it is laid out to fill that width, in order of what helps the
+       reader most: first the overhang is taken back, so every label sits within
+       its own arrow; then labels get longer lines, so they take fewer of them;
+       then the narrowest gaps are raised - never past SEQ.maxGap, so two
+       participants do not end up a whole column apart. A diagram too wide for
+       the room goes the other way: its labels wrap shorter before the whole
+       drawing is shrunk to fit. */
+
+    var chosen = solveGaps(SEQ.overhang), wraps = SEQ.wraps, k;
+    if (avail > 0 && n > 1 && widthFor(chosen) > avail){
+      // Narrower participant names first - wide names set the least gap between
+      // lanes, and wrapping one only makes the header row taller - then shorter
+      // message lines, which make every row taller.
+      var tryFit = function(names, lines){
+        remeasureActors(names);
+        remeasure(lines);
+        chosen = solveGaps(SEQ.overhang);
+        return widthFor(chosen) <= avail;
+      };
+      var fitted = SEQ.squeeze.some(function(s){ return tryFit(s[0], s[1]); });
+      // shorter lines that still do not fit only make it taller: keep the usual ones
+      if (!fitted) tryFit(SEQ.squeeze[SEQ.squeeze.length - 1][0], SEQ.textW);
+    } else if (avail > 0 && n > 1){
+      var loose = solveGaps(0);
+      if (widthFor(loose) > avail){
+        var lo = 0, hi = SEQ.overhang;
+        for (k=0;k<7;k++){
+          var mid = (lo + hi)/2, g = solveGaps(mid);
+          if (widthFor(g) <= avail){ chosen = g; hi = mid; } else lo = mid;
+        }
+      } else {
+        for (k = wraps.indexOf(SEQ.textW) + 1; k < wraps.length; k++){
+          remeasure(wraps[k]);
+          var longer = solveGaps(0);
+          if (widthFor(longer) > avail){ remeasure(wraps[k-1]); break; }
+          loose = longer;
+        }
+        var room = avail - widthFor(loose);
+        var raise = function(level){
+          return loose.map(function(gp){ return Math.max(gp, Math.min(level, SEQ.maxGap)); });
+        };
+        var added = function(level){
+          return raise(level).reduce(function(s, gp, j){ return s + gp - loose[j]; }, 0);
+        };
+        var level = SEQ.maxGap;
+        if (added(level) > room){
+          var lo2 = Math.min.apply(null, loose), hi2 = SEQ.maxGap;
+          for (k=0;k<20;k++){ var m2 = (lo2 + hi2)/2; if (added(m2) > room) hi2 = m2; else lo2 = m2; }
+          level = lo2;
+        }
+        chosen = raise(level);
+        // what grows with the lanes - a frame's reach, a centred note - is measured, not assumed
+        for (k=0;k<4;k++){
+          var over = widthFor(chosen) - avail;
+          if (over <= 1) break;
+          chosen = chosen.map(function(gp, j){ return Math.max(loose[j], gp - over/chosen.length); });
+        }
+      }
+    }
+    placeLanes(chosen);
+    buildFrames();
+
+    /* --- rows, top to bottom --- */
+
+    var y = SEQ.margin;
+    if (titleM) y += titleM.h + 14;
+    if (boxes.length) y += boxTitled ? 28 : 12;
+    var headTop = y, headBottom = y + headH;
+    y = headBottom + 18;
+
+    var active = {}, bars = [], born = {}, died = {};
+    var depth = function(id){ return (active[id] || []).length; };
+    // where an arrow meets a lane: the edge of an activation bar, if one is open
+    var meet = function(id, side, extra){
+      var d = depth(id) + (extra || 0);
+      return d ? lane(id) + (d - 1)*SEQ.bar/2 + side*SEQ.bar/2 : lane(id);
+    };
+
+    items.forEach(function(it, k){
+      var prev = items[k-1], next = items[k+1];
+      if (it.kind === 'msg'){
+        var gapBelow = it.n != null ? SEQ.numGap : SEQ.plateGap;
+        var arrowY = y + (it.ph ? it.ph + gapBelow : gapBelow + 2);
+        if (it.born) arrowY = Math.max(arrowY, y + headH/2 + 2);
+        it.top = y;
+        it.y = Math.round(arrowY);
+        var dir = it.b >= it.a ? 1 : -1;
+        var opens = next && next.kind === 'on' && next.actor === it.to ? 1 : 0;
+        if (it.a === it.b){
+          it.x1 = meet(it.from, 1);
+          it.x2 = meet(it.from, 1, opens);
+        } else {
+          // a participant created by this message is met at its box, not its lane
+          it.x1 = it.born === it.from ? lane(it.from) + dir*byId[it.from].w/2 : meet(it.from, dir);
+          it.x2 = it.born === it.to ? lane(it.to) - dir*byId[it.to].w/2 : meet(it.to, -dir, opens);
+        }
+        if (it.born) born[it.born] = it.y;
+        if (it.dies) died[it.dies] = it.y + 16;
+        y = it.y + (it.a === it.b ? SEQ.selfH : 0) + (it.born ? headH/2 : 0) + SEQ.rowGap;
+        return;
+      }
+      var anchor = prev && prev.kind === 'msg' ? prev.y + (prev.a === prev.b ? SEQ.selfH : 0) : y;
+      if (it.kind === 'on'){
+        (active[it.actor] = active[it.actor] || []).push({ y0: anchor, d: depth(it.actor) });
+        return;
+      }
+      if (it.kind === 'off'){
+        var open = active[it.actor] && active[it.actor].pop();
+        if (open) bars.push({ actor:it.actor, y0:open.y0, y1:Math.max(anchor, open.y0 + 14), d:open.d });
+        return;
+      }
+      if (it.kind === 'note'){
+        var sp = noteSpan(it);
+        it.l = sp[0]; it.r = sp[1]; it.y = y;
+        y += it.h + SEQ.rowGap;
+        return;
+      }
+      var f = it.f;
+      if (!f) return;
+      var labelFor = function(text, kwW){
+        return String(decode(text)).trim()
+          ? measure(text, SEQ.fs, Math.max(f.r - f.l - kwW - 30, 120), null, true) : null;
+      };
+      if (it.kind === 'open'){
+        f.y0 = y - 4;
+        if (f.frame === 'rect'){ y += 8; return; }
+        f.cond = labelFor(f.text, f.kwW);
+        y = f.y0 + Math.max(SEQ.tabH, f.cond ? f.cond.h + 6 : 0) + 14;
+        return;
+      }
+      if (it.kind === 'split'){
+        it.y = y - 4;
+        it.cond = labelFor(it.text, it.kwW);
+        y = it.y + Math.max(SEQ.tabH, it.cond ? it.cond.h + 6 : 0) + 14;
+        return;
+      }
+      if (it.kind === 'close'){
+        f.y1 = y - (f.frame === 'rect' ? 6 : 2);
+        y = f.y1 + SEQ.rowGap + 2;
+      }
+    });
+
+    var lifeEnd = y + 4;
+    Object.keys(active).forEach(function(id){
+      active[id].forEach(function(b){ bars.push({ actor:id, y0:b.y0, y1:Math.max(lifeEnd - 10, b.y0 + 14), d:b.d }); });
+    });
+    var tall = lifeEnd - headBottom > SEQ.tall;
+    var footTop = lifeEnd, footBottom = tall ? footTop + headH : lifeEnd;
+    var boxBottom = footBottom + 12;
+
+    var bb = bounds(), minX = bb.minX, maxX = bb.maxX, boxRects = bb.boxRects;
+    var W = maxX - minX, H = Math.ceil((boxRects.length ? boxBottom : footBottom) + SEQ.margin);
+
+    /* --- drawing --- */
+
+    var svg = mk('svg', { viewBox: minX + ' 0 ' + W + ' ' + H, width:W, height:H, role:'img' }, 'dg dg-seq');
+    svg.style.maxWidth = '100%';
+    svg.style.height = 'auto';
+    var layer = function(cls){ var g = mk('g', null, cls); svg.appendChild(g); return g; };
+    var gBox = layer('dg-seq-boxes'), gFrame = layer('dg-seq-frames'), gNode = layer('dg-nodes'),
+        gEdge = layer('dg-edges'), gNote = layer('dg-seq-notes'), gLabel = layer('dg-labels'),
+        gMark = layer('dg-seq-marks');
+
+    if (titleM) svg.insertBefore(textBlock(titleM, (minX + maxX)/2, SEQ.margin + titleM.h/2, 'dg-seq-title'), gBox);
+
+    boxRects.forEach(function(br){
+      var top = headTop - (boxTitled ? 28 : 12);
+      var rect = mk('rect', { x:br.l, y:top, width:br.r - br.l, height:boxBottom - top, rx:12 }, 'dg-seq-box');
+      if (br.b.fill && !/^(transparent|none)$/i.test(br.b.fill)){ rect.style.fill = br.b.fill; rect.style.fillOpacity = '.13'; }
+      gBox.appendChild(rect);
+      if (br.b.name && String(br.b.name).trim()){
+        gBox.appendChild(textBlock(measure(br.b.name, 12, br.r - br.l - 20, 560), (br.l + br.r)/2, top + 14, 'dg-seq-box-text'));
+      }
+    });
+
+    var actorEl = function(g, a, top){
+      var x = X[a.i], w = a.w, h = headH, l = x - w/2, shape;
+      if (a.type === 'collections') g.appendChild(mk('rect', { x:l + 4, y:top - 4, width:w, height:h, rx:8 }, 'dg-node-shape'));
+      if (a.type === 'database') shape = shapeEl(l, top, w, h, 'cylinder');
+      else shape = mk('rect', { x:l, y:top, width:w, height:h, rx: a.type === 'queue' ? h/2 : 8 });
+      shape.setAttribute('class', 'dg-node-shape');
+      g.appendChild(shape);
+      var cx = x, cy = top + h/2 + (a.type === 'database' ? 5 : 0);
+      if (a.type === 'actor'){
+        var gx = l + PAD_X + 3;
+        cx = x + 10;
+        g.appendChild(mk('circle', { cx:gx, cy:cy - 4.5, r:3.4 }, 'dg-seq-glyph'));
+        g.appendChild(mk('path', { d:'M'+(gx - 6)+','+(cy + 7)+' a6,6.5 0 0 1 12,0' }, 'dg-seq-glyph'));
+      }
+      g.appendChild(textBlock(a.m, cx, cy, 'dg-node-text dg-seq-actor'));
+    };
+
+    actors.forEach(function(a){
+      var x = X[a.i];
+      var g = mk('g', { 'data-node':a.id }, 'dg-el dg-node');
+      var y0 = born[a.id] != null ? born[a.id] + headH/2 : headBottom;
+      var y1 = died[a.id] != null ? died[a.id] : footTop;
+      g.appendChild(mk('line', { x1:x, y1:y0, x2:x, y2:y1 }, 'dg-seq-life-hit'));
+      g.appendChild(mk('line', { x1:x, y1:y0, x2:x, y2:y1 }, 'dg-seq-life'));
+      bars.forEach(function(b){
+        if (b.actor !== a.id) return;
+        g.appendChild(mk('rect', { x:x - SEQ.bar/2 + b.d*SEQ.bar/2, y:b.y0, width:SEQ.bar, height:b.y1 - b.y0, rx:2 }, 'dg-seq-bar'));
+      });
+      if (died[a.id] != null){
+        g.appendChild(mk('path', { d:'M'+(x-6)+','+(y1-6)+' L'+(x+6)+','+(y1+6)+' M'+(x+6)+','+(y1-6)+' L'+(x-6)+','+(y1+6) }, 'dg-seq-x'));
+      }
+      actorEl(g, a, born[a.id] != null ? born[a.id] - headH/2 : headTop);
+      if (tall && died[a.id] == null) actorEl(g, a, footTop);
+      gNode.appendChild(g);
+    });
+
+    items.forEach(function(it){
+      if (it.kind !== 'msg') return;
+      var g = mk('g', { 'data-edge':it.id, 'data-src':it.from, 'data-dst':it.to }, 'dg-el dg-edge');
+      var y = it.y, x1 = it.x1, x2 = it.x2, d, tip, back, tail, tailBack;
+      if (it.a === it.b){
+        // the badge sits on the lane like any other; the loop leaves from its edge
+        var r = 6, xr = Math.max(x1, x2) + SEQ.selfW, yb = y + SEQ.selfH;
+        var xs = it.n != null ? x1 + SEQ.badge + 1 : x1;
+        d = 'M'+xs+','+y+' H'+(xr - r)+' Q'+xr+','+y+' '+xr+','+(y + r)+' V'+(yb - r)+
+            ' Q'+xr+','+yb+' '+(xr - r)+','+yb+' H'+x2;
+        tip = { x:x2, y:yb }; back = { x:x2 + 10, y:yb };
+        tail = { x:x1, y:y }; tailBack = { x:x1 + 10, y:y };
+      } else {
+        var s = x2 > x1 ? 1 : -1;
+        d = 'M'+x1+','+y+' H'+x2;
+        tip = { x:x2, y:y }; back = { x:x2 - s*10, y:y };
+        tail = { x:x1, y:y }; tailBack = { x:x1 + s*10, y:y };
+      }
+      g.appendChild(mk('path', { d:d, fill:'none' }, 'dg-edge-hit'));
+      var line = mk('path', { d:d, fill:'none' }, 'dg-edge-line');
+      if (/DOTTED/.test(it.type)) line.style.strokeDasharray = '6 4';
+      g.appendChild(line);
+      var head = headKind(it.type);
+      if (head) g.appendChild(arrowHead(tip, back, head));
+      if (/BIDIRECTIONAL/.test(it.type)){
+        if (it.n != null && it.a !== it.b){
+          var nudge = (x2 > x1 ? 1 : -1) * (SEQ.badge + 1);
+          tail = { x:x1 + nudge, y:y }; tailBack = { x:tailBack.x + nudge, y:y };
+        }
+        g.appendChild(arrowHead(tail, tailBack, 'tri'));
+      }
+      gEdge.appendChild(g);
+
+      var lg = mk('g', { 'data-edge':it.id, 'data-src':it.from, 'data-dst':it.to }, 'dg-el dg-label');
+      if (it.m){
+        var pl = plateLeft(Math.min(X[it.a], X[it.b]), Math.max(X[it.a], X[it.b]), Math.min(it.a, it.b), Math.max(it.a, it.b), it.pw);
+        var cx = pl + it.pw/2;
+        lg.appendChild(mk('rect', { x:pl, y:it.top, width:it.pw, height:it.ph, rx:5 }, 'dg-label-plate'));
+        lg.appendChild(textBlock(it.m, cx, it.top + it.ph/2, 'dg-edge-text dg-seq-text'));
+      }
+      if (it.n != null){
+        var label = String(it.n);
+        cv.font = fontString(9.6, 620);
+        var bw = Math.max(SEQ.badge*2, Math.ceil(cv.measureText(label).width) + 9);
+        lg.appendChild(mk('rect', { x:x1 - bw/2, y:y - SEQ.badge, width:bw, height:SEQ.badge*2, rx:SEQ.badge }, 'dg-seq-num'));
+        var nt = mk('text', { x:x1, y:y + .5, 'text-anchor':'middle' }, 'dg-seq-num-text');
+        nt.textContent = label;
+        lg.appendChild(nt);
+      }
+      gLabel.appendChild(lg);
+    });
+
+    items.forEach(function(it){
+      if (it.kind !== 'note') return;
+      gNote.appendChild(mk('rect', { x:it.l, y:it.y, width:it.r - it.l, height:it.h, rx:6 }, 'dg-seq-note'));
+      gNote.appendChild(textBlock(it.m, (it.l + it.r)/2, it.y + it.h/2, 'dg-seq-note-text'));
+    });
+
+    // the keyword on a tab, the condition on a plate beside it
+    var mark = function(f, top, kw, kwW, cond, first){
+      var l = f.l, h = SEQ.tabH;
+      gMark.appendChild(mk('path', { d: first
+        ? 'M'+l+','+(top + h)+' V'+(top + 8)+' A8,8 0 0 1 '+(l + 8)+','+top+' H'+(l + kwW)+' V'+(top + h - 6)+
+          ' A6,6 0 0 1 '+(l + kwW - 6)+','+(top + h)+' Z'
+        : 'M'+l+','+top+' H'+(l + kwW)+' V'+(top + h - 6)+' A6,6 0 0 1 '+(l + kwW - 6)+','+(top + h)+' H'+l+' Z'
+      }, 'dg-seq-tab'));
+      var kt = mk('text', { x:l + kwW/2, y:top + h/2 + .5, 'text-anchor':'middle' }, 'dg-seq-kw');
+      kt.textContent = kw;
+      gMark.appendChild(kt);
+      if (!cond) return;
+      var tx = l + kwW + 9;
+      gMark.appendChild(mk('rect', { x:tx - 4, y:top + 2, width:cond.w + 8, height:cond.h + 2, rx:4 }, 'dg-label-plate'));
+      gMark.appendChild(textLeft(cond, tx, top + 3 + cond.lh/2, 'dg-seq-cond'));
+    };
+
+    frames.forEach(function(f){
+      if (f.y0 == null || f.y1 == null) return;
+      if (f.frame === 'rect'){
+        var band = mk('rect', { x:f.l, y:f.y0, width:f.r - f.l, height:f.y1 - f.y0, rx:8 }, 'dg-seq-rect');
+        if (f.text) band.style.fill = decode(f.text);
+        gFrame.appendChild(band);
+        return;
+      }
+      gFrame.appendChild(mk('rect', { x:f.l, y:f.y0, width:f.r - f.l, height:f.y1 - f.y0, rx:8 }, 'dg-seq-frame'));
+      mark(f, f.y0, f.kw, f.kwW, f.cond, true);
+      f.splits.forEach(function(s){
+        if (s.y == null) return;
+        gFrame.appendChild(mk('line', { x1:f.l, y1:s.y, x2:f.r, y2:s.y }, 'dg-seq-split'));
+        mark(f, s.y, s.kw, s.kwW, s.cond, false);
+      });
+    });
+
+    // the participant row alone, to ride along the top of the page
+    var strip = null;
+    if (tall){
+      strip = mk('svg', { viewBox: minX + ' ' + (headTop - 7) + ' ' + W + ' ' + (headH + 14),
+                          preserveAspectRatio:'xMidYMin meet' }, 'dg dg-seq dg-float-svg');
+      actors.forEach(function(a){
+        if (born[a.id] != null) return;
+        var g = mk('g', { 'data-node':a.id }, 'dg-el dg-node');
+        actorEl(g, a, headTop);
+        strip.appendChild(g);
+      });
+      strip._top = headTop - 7;
+      strip._h = headH + 14;
+    }
+
+    return { svg:svg, strip:strip, count:count };
+  }
+
+  function renderSequence(fig, code){
+    return Promise.resolve(mermaid.mermaidAPI.getDiagramFromText(code)).then(function(d){
+      var db = d && d.db;
+      if (!db || typeof db.getMessages !== 'function' || !db.LINETYPE) throw new Error('no sequence model');
+      var out = fig.querySelector('.diagram-out');
+      var avail = out.clientWidth;
+      var res = drawSequence(db, code, avail);
+      out.textContent = '';
+      out.appendChild(res.svg);
+      fig._seqWidth = avail;
+      refitOnResize(fig, out);
+      if (res.strip){
+        var wrap = el('div', 'dg-float');
+        wrap.appendChild(res.strip);
+        wrap._main = res.svg;
+        res.strip._main = res.svg;
+        res.svg._float = res.strip;
+        out.appendChild(wrap);
+      }
+      var note = fig.querySelector('.diagram-note');
+      if (res.count >= 6){
+        if (!note){ note = el('div','diagram-note'); fig.appendChild(note); }
+        note.textContent = 'Hover a message or a participant to isolate it · click to pin · Esc to release';
+      } else if (note) note.remove();
+      scheduleFloats();
+    });
+  }
+
+  // The lanes are fitted to the width the diagram had when it was drawn. When
+  // that changes - the window resized, the sidebar folded away, a folded
+  // section opened for the first time - it is drawn again for the new width.
+  function refitOnResize(fig, out){
+    if (fig._seqRefit || typeof ResizeObserver === 'undefined') return;
+    var timer = 0;
+    fig._seqRefit = new ResizeObserver(function(){
+      clearTimeout(timer);
+      timer = setTimeout(function(){
+        var w = out.isConnected ? out.clientWidth : 0;
+        // a scrollbar coming and going is not a reason to redraw
+        if (!w || fig.dataset.drawn !== 'clean' || Math.abs(w - (fig._seqWidth || 0)) < 16) return;
+        fig.dataset.drawn = '';
+        draw(fig, 'clean');
+      }, 120);
+    });
+    fig._seqRefit.observe(out);
+  }
+
+  // A long sequence outlives its own header: a few screens down, which lane
+  // is which becomes a guess. While the diagram is on screen and its header is
+  // not, the participant row is laid over the top of it, lane for lane.
+  function placeFloats(){
+    var bar = document.getElementById('topbar');
+    var edge = bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
+    [].slice.call(document.querySelectorAll('.dg-float')).forEach(function(f){
+      var svg = f._main, strip = f.firstChild, fig = f.closest('.diagram');
+      if (!svg || !strip || !fig || !svg.isConnected) return;
+      var vb = svg.viewBox && svg.viewBox.baseVal, r = svg.getBoundingClientRect();
+      if (!vb || !vb.width || !r.width){ f.classList.remove('on'); return; }
+      var k = r.width / vb.width, h = strip._h * k;
+      var on = r.top + (strip._top + strip._h - vb.y) * k < edge && r.bottom - h * 3 > edge;
+      f.classList.toggle('on', on);
+      if (!on) return;
+      var fr = fig.getBoundingClientRect();
+      f.style.top = Math.round(edge - fr.top - fig.clientTop + fig.scrollTop) + 'px';
+      f.style.height = Math.round(h) + 'px';
+      strip.style.left = Math.round(r.left - fr.left - fig.clientLeft + fig.scrollLeft) + 'px';
+      strip.style.width = Math.round(r.width) + 'px';
+      strip.style.height = Math.round(h) + 'px';
+    });
+  }
+  var floatTick = false;
+  function scheduleFloats(){
+    if (floatTick) return;
+    floatTick = true;
+    requestAnimationFrame(function(){ floatTick = false; placeFloats(); });
+  }
+  addEventListener('scroll', scheduleFloats, { passive: true });
+  addEventListener('resize', scheduleFloats);
+  // the page's own top bar slides in and out; the row sits under it
+  document.addEventListener('transitionend', function(e){
+    if (e.target && e.target.id === 'topbar') scheduleFloats();
+  });
+
   /* --------------------------------------------------------------- render */
 
-  // Both of the types the clean renderer draws. Everything else - sequence,
-  // state, class, gantt, pie - goes to mermaid, which draws them well.
-  var CLEAN_KINDS = { flowchart:'flowchart', graph:'flowchart', erdiagram:'er' };
+  // The types the clean renderer draws. Everything else - state, class,
+  // gantt, pie - goes to mermaid, which draws them well.
+  var CLEAN_KINDS = { flowchart:'flowchart', graph:'flowchart', erdiagram:'er', sequencediagram:'sequence' };
 
   function cleanKind(code){
     var head = String(code).replace(/^\s*(%%\{[\s\S]*?\}%%\s*)*/, '').trim().split(/[\s\n]/)[0] || '';
     return CLEAN_KINDS[head.toLowerCase()] || null;
   }
 
-  function canClean(){
-    return typeof ELK !== 'undefined' && typeof mermaid !== 'undefined' &&
+  // a sequence is laid out here, not by ELK, so it only needs mermaid's parser
+  function canClean(kind){
+    return (kind === 'sequence' || typeof ELK !== 'undefined') && typeof mermaid !== 'undefined' &&
            mermaid.mermaidAPI && typeof mermaid.mermaidAPI.getDiagramFromText === 'function';
   }
 
   function renderClean(fig, code, kind){
     if (!initMermaid()) return Promise.reject(new Error('mermaid unavailable'));
+    if (kind === 'sequence') return renderSequence(fig, code);
     if (!elk) elk = new ELK();
     return Promise.resolve(mermaid.mermaidAPI.getDiagramFromText(code)).then(function(d){
       var db = d && d.db;
@@ -761,7 +1536,7 @@ export const DIAGRAMS_JS = String.raw`
   function paintButton(fig, code, used){
     var btn = fig.querySelector('[data-act="engine"]');
     if (!btn) return;
-    btn.textContent = (cleanKind(code) && canClean())
+    btn.textContent = (cleanKind(code) && canClean(cleanKind(code)))
       ? (used === 'clean' ? 'Mermaid layout' : 'Clean layout') : '';
   }
 
@@ -772,7 +1547,7 @@ export const DIAGRAMS_JS = String.raw`
     fig.dataset.drawn = want;
     var kind = cleanKind(code);
     var done;
-    if (want === 'clean' && kind && canClean()){
+    if (want === 'clean' && kind && canClean(kind)){
       done = renderClean(fig, code, kind).catch(function(){
         // Anything the clean renderer cannot do is mermaid's job, quietly.
         fig.dataset.drawn = 'mermaid';
@@ -819,6 +1594,19 @@ export const DIAGRAMS_JS = String.raw`
       n.classList.remove('is-hot');
       n.classList.remove('is-near');
     });
+    mirror(svg);
+  }
+
+  // the floating participant row of a sequence shows what its diagram shows
+  function mirror(svg){
+    var strip = svg._float;
+    if (!strip) return;
+    strip.classList.toggle('has-hot', svg.classList.contains('has-hot'));
+    [].slice.call(strip.querySelectorAll('.dg-node')).forEach(function(n){
+      var twin = svg.querySelector('.dg-node[data-node="' + sel(n.dataset.node) + '"]');
+      n.classList.toggle('is-hot', !!twin && twin.classList.contains('is-hot'));
+      n.classList.toggle('is-near', !!twin && twin.classList.contains('is-near'));
+    });
   }
 
   function light(svg, kind, id){
@@ -834,7 +1622,7 @@ export const DIAGRAMS_JS = String.raw`
         var n = svg.querySelector('.dg-node[data-node="' + sel(nid) + '"]');
         if (n) n.classList.add('is-near');
       });
-      return;
+      return mirror(svg);
     }
     var me = svg.querySelector('.dg-node[data-node="' + sel(id) + '"]');
     if (me) me.classList.add('is-hot');
@@ -848,6 +1636,7 @@ export const DIAGRAMS_JS = String.raw`
       var n = svg.querySelector('.dg-node[data-node="' + sel(nid) + '"]');
       if (n && n !== me) n.classList.add('is-near');
     });
+    mirror(svg);
   }
 
   function targetOf(e){
@@ -855,6 +1644,7 @@ export const DIAGRAMS_JS = String.raw`
     if (!t || !t.closest) return null;
     var svg = t.closest('svg.dg');
     if (!svg) return null;
+    if (svg._main) svg = svg._main;      // the floating row stands in for its diagram
     var edge = t.closest('.dg-edge,.dg-label');
     if (edge) return { svg: svg, kind: 'edge', id: edge.dataset.edge };
     var node = t.closest('.dg-node');

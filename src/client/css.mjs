@@ -28,6 +28,8 @@ html{-webkit-text-size-adjust:100%}
   --dg-er-line:#e7eaf0; --dg-er-hover:rgba(27,86,214,.11);
   --dg-er-badge:#eef0f4; --dg-er-badge-line:#dce0e8; --dg-er-badge-ink:#5f6674;
   --dg-er-badge-pk:#dfe4ee; --dg-er-badge-pk-line:#c8d0dd;
+  /* sequences: notes are the one warm surface, so an aside never reads as a message */
+  --dg-seq-num:#5f6674; --dg-seq-note:#fbf8ee; --dg-seq-note-line:#e7dfc4; --dg-seq-note-ink:#4f4a3a;
 }
 body{margin:0;background:var(--bg);color:var(--ink);
   font:15px/1.7 var(--font);
@@ -357,7 +359,55 @@ svg.dg .dg-el.is-hot,svg.dg .dg-el.is-near{opacity:1}
 .dg-el.is-hot .dg-card-ring{stroke:var(--dg-hot);stroke-width:1.8}
 .dg-el.is-hot .dg-card-dot{fill:var(--dg-hot)}
 .dg-el.is-hot .dg-er-head{fill:var(--dg-er-head-hot)}
-@media print{svg.dg.has-hot .dg-el{opacity:1}}
+
+/* ---- sequences ----
+   Participants are nodes and messages are edges, so hovering and pinning run
+   on the rules above; what follows is only what a sequence adds. Frames, notes
+   and participant boxes are the ground the messages sit on: they fade part of
+   the way with the rest, never all the way, so a lit message keeps its context. */
+.dg-seq-life{stroke:#d3d8e0;stroke-width:1.1}
+.dg-seq-life-hit{stroke:transparent;stroke-width:12;cursor:pointer}
+.dg-seq-actor{font-weight:560;letter-spacing:-.004em}
+.dg-seq-glyph{fill:none;stroke:var(--muted);stroke-width:1.2}
+.dg-seq-bar{fill:var(--dg-group);stroke:var(--dg-node-line);stroke-width:1}
+.dg-seq-x{fill:none;stroke:var(--dg-edge);stroke-width:1.7;stroke-linecap:round}
+.dg-seq-text{fill:#2f3544}
+.dg-head-line{fill:none;stroke:var(--dg-edge);stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.dg-seq-num{fill:var(--dg-seq-num);stroke:var(--surface);stroke-width:1.5}
+.dg-seq-num-text{fill:#fff;font-size:9.6px;font-weight:620}
+.dg-seq-frame{fill:rgba(20,26,38,.018);stroke:#d3d8e0;stroke-width:1}
+.dg-seq-split{stroke:#cdd2db;stroke-width:1;stroke-dasharray:5 4}
+.dg-seq-tab{fill:var(--dg-er-badge);stroke:#d3d8e0;stroke-width:1}
+.dg-seq-kw{fill:var(--dg-er-badge-ink);font-size:9.4px;font-weight:620;letter-spacing:.05em}
+.dg-seq-cond{fill:var(--muted);font-size:11.5px}
+.dg-seq-rect{fill:var(--dg-group);fill-opacity:.8}
+.dg-seq-note{fill:var(--dg-seq-note);stroke:var(--dg-seq-note-line);stroke-width:1}
+.dg-seq-note-text{fill:var(--dg-seq-note-ink);font-size:11.5px}
+.dg-seq-box{fill:var(--dg-group);stroke:var(--dg-group-line);stroke-width:1}
+.dg-seq-box-text{fill:var(--muted);font-size:12px;font-weight:560}
+.dg-seq-title{fill:var(--ink);font-size:14px;font-weight:620}
+.dg-seq-boxes,.dg-seq-frames,.dg-seq-notes,.dg-seq-marks{transition:opacity .12s ease}
+svg.dg.has-hot .dg-seq-boxes,svg.dg.has-hot .dg-seq-frames,
+svg.dg.has-hot .dg-seq-notes,svg.dg.has-hot .dg-seq-marks{opacity:.4}
+.dg-el.is-hot .dg-seq-life{stroke:var(--dg-hot);stroke-width:1.6}
+.dg-el.is-near .dg-seq-life{stroke:var(--dg-hot);stroke-opacity:.5}
+.dg-el.is-hot .dg-seq-bar{stroke:var(--dg-hot)}
+.dg-el.is-hot .dg-seq-x{stroke:var(--dg-hot)}
+.dg-el.is-hot .dg-head-line{stroke:var(--dg-hot)}
+.dg-el.is-hot .dg-seq-num{fill:var(--dg-hot)}
+.dg-el.is-hot .dg-seq-text{fill:var(--dg-hot)}
+/* the participant row that rides along the top of a long sequence */
+.dg-float{position:absolute;left:0;right:0;top:0;z-index:3;pointer-events:none;opacity:0;visibility:hidden;
+  background:rgba(255,255,255,.93);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);
+  box-shadow:0 8px 16px -14px rgba(20,26,40,.35);transition:opacity .15s ease,visibility .15s}
+.dg-float.on{opacity:1;visibility:visible}
+.dg-float svg.dg{position:absolute;top:0;margin:0;max-width:none}
+.dg-float.on .dg-node{pointer-events:auto;cursor:pointer}
+
+@media print{svg.dg.has-hot .dg-el{opacity:1}
+  svg.dg.has-hot .dg-seq-boxes,svg.dg.has-hot .dg-seq-frames,
+  svg.dg.has-hot .dg-seq-notes,svg.dg.has-hot .dg-seq-marks{opacity:1}
+  .dg-float{display:none}}
 `;
 
 export const CSS_LIGHTBOX = `

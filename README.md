@@ -66,9 +66,20 @@ Cardinality is standard crow's-foot notation, drawn against the entity where it 
 works exactly as above — hover a relationship and both entities light up, hover an entity and you
 get everything that touches it.
 
-Everything else (sequence, state, gantt, pie, class) renders through mermaid as before, and mermaid
-is the fallback if anything goes wrong. Every diagram carries a button to switch between the two,
-so the comparison above is always one click away.
+### Sequence diagrams stay readable at column width
+
+Mermaid widens every gap between two lifelines until the longest label crossing it fits, so a
+sequence whose messages carry real payloads comes out thousands of pixels wide and is shrunk until
+nothing in it can be read. DocuCane lays the diagram out for the width it is actually shown at:
+with room to spare the lanes open up and every label sits within its own arrow; with too little,
+names and labels wrap and a label may overhang its arrow — never as far as the next lifeline — so
+the rows take the height instead. Frames wrap exactly what they hold with their conditions on a tab, autonumbers
+are badges you can read, a long diagram's participants follow you down the page, and hovering a
+message or a participant isolates it just like above.
+
+Everything else (state, gantt, pie, class) renders through mermaid as before, and mermaid is the
+fallback if anything goes wrong. Every diagram carries a button to switch between the two, so the
+comparison is always one click away.
 
 ## What else you get
 
