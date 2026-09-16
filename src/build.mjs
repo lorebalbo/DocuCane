@@ -8,6 +8,32 @@ import { vendorMermaid, vendorElk, vendorFont } from './vendor.mjs';
 import { renderPage } from './page.mjs';
 
 export async function build(cfg, { open = true, refresh = false, quiet = false } = {}) {
+  const { docs } = collectDocs(cfg);
+
+  const assets = await vendorAssets(cfg, refresh);
+  const html = pageFor(cfg, docs, assets);
+
+  const outFile = path.join(cfg.outDir, 'index.html');
+  fs.writeFileSync(outFile, html);
+
+  const report = {
+    outFile,
+    docs,
+    bytes: fs.statSync(outFile).size,
+    notes: { mermaid: assets.mermaid.note, elk: assets.elk.note, font: assets.font.note },
+  };
+
+  if (!quiet) print(cfg, report);
+  if (open) openInBrowser(outFile);
+  return report;
+}
+
+// The documents half of a build, kept apart from the page so the watcher can
+// redo it after a save without redoing everything. Hand the previous memo back
+// in and only files whose bytes changed are rendered again - unless the set of
+// files itself changed, which can move where any link points, so then every
+// document is rendered again.
+export function collectDocs(cfg, memo = null) {
   if (!fs.existsSync(cfg.docsDir)) {
     throw new Error('No documents folder at ' + cfg.docsDir +
       '\nPoint the tool at one: docucane <folder>, or set "docs" in docs.config.json');
@@ -21,40 +47,52 @@ export async function build(cfg, { open = true, refresh = false, quiet = false }
 
   // ids first: cross-document links need to resolve to documents not yet built
   const byFile = assignIds(entries);
-  const docs = entries.map((e) => buildDoc(e, byFile, cfg));
+  const layout = JSON.stringify(entries.map((e) => [e.rel, e.group]));
+  const reuse = memo && memo.layout === layout;
+  const files = new Map();
+  const changed = [];
 
-  fs.mkdirSync(cfg.outDir, { recursive: true });
-  // ELK travels even when the default engine is mermaid: the reader can switch
-  // any single diagram over from the page, and that has to work offline too.
-  const mermaid = await vendorMermaid(cfg.outDir, refresh);
-  const elk = await vendorElk(cfg.outDir, refresh);
-  const font = await vendorFont(cfg.outDir, refresh);
-
-  const stamp = new Date().toLocaleString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  const docs = entries.map((e) => {
+    const raw = fs.readFileSync(e.abs, 'utf8');
+    const was = reuse && memo.files.get(e.rel);
+    if (was && was.raw === raw) { files.set(e.rel, was); return was.doc; }
+    let doc;
+    try {
+      doc = buildDoc(e, byFile, cfg, raw);
+    } catch (err) {
+      throw new Error(e.rel + ': ' + (err && err.message || err));
+    }
+    files.set(e.rel, { raw, doc });
+    changed.push(doc.id);
+    return doc;
   });
 
-  const html = renderPage({
+  return { docs, changed, memo: { layout, files } };
+}
+
+// ELK travels even when the default engine is mermaid: the reader can switch
+// any single diagram over from the page, and that has to work offline too.
+export async function vendorAssets(cfg, refresh = false) {
+  fs.mkdirSync(cfg.outDir, { recursive: true });
+  return {
+    mermaid: await vendorMermaid(cfg.outDir, refresh),
+    elk: await vendorElk(cfg.outDir, refresh),
+    font: await vendorFont(cfg.outDir, refresh),
+  };
+}
+
+export const stampNow = () => new Date().toLocaleString('en-GB', {
+  day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+});
+
+export function pageFor(cfg, docs, assets, stamp = stampNow()) {
+  return renderPage({
     cfg, docs,
-    fontCss: font.css,
-    mermaidTag: mermaid.tag,
-    elkTag: elk.tag,
+    fontCss: assets.font.css,
+    mermaidTag: assets.mermaid.tag,
+    elkTag: assets.elk.tag,
     stamp,
   });
-
-  const outFile = path.join(cfg.outDir, 'index.html');
-  fs.writeFileSync(outFile, html);
-
-  const report = {
-    outFile,
-    docs,
-    bytes: fs.statSync(outFile).size,
-    notes: { mermaid: mermaid.note, elk: elk.note, font: font.note },
-  };
-
-  if (!quiet) print(cfg, report);
-  if (open) openInBrowser(outFile);
-  return report;
 }
 
 function print(cfg, r) {
@@ -71,8 +109,12 @@ function print(cfg, r) {
   console.log('  -> ' + r.outFile + '  (' + (r.bytes / 1024).toFixed(0) + ' KB)');
 }
 
-function openInBrowser(file) {
-  const cmd = process.platform === 'darwin' ? 'open'
-    : process.platform === 'win32' ? 'start' : 'xdg-open';
-  execFile(cmd, [file], (err) => { if (err) console.error('  (open failed: ' + err.message + ')'); });
+// `start` is a cmd built-in rather than a program, so on Windows it has to go
+// through cmd; the empty first argument stops a quoted path being taken for
+// the window title.
+export function openInBrowser(target) {
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [target]]
+    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', target]]
+    : ['xdg-open', [target]];
+  execFile(cmd, args, (err) => { if (err) console.error('  (open failed: ' + err.message + ')'); });
 }

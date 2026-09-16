@@ -12,6 +12,7 @@ No server, no dependencies, no build pipeline. One file you can email.
 ```bash
 npx docucane ./docs      # render a folder, zero configuration
 npx docucane init        # or wire a project up once, then just `npx docucane`
+npx docucane --watch     # while writing: serve it, and update the open page on every save
 ```
 
 `init` writes a `docs.config.json`, creates the folder if missing, gitignores the output, and

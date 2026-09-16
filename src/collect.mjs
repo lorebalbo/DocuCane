@@ -88,10 +88,9 @@ export function assignIds(entries) {
   return map;
 }
 
-export function buildDoc(entry, byFile, cfg) {
+export function buildDoc(entry, byFile, cfg, raw = fs.readFileSync(entry.abs, 'utf8')) {
   const name = entry.file.replace(/\.[^.]+$/, '');
   const id = byFile.get(entry.file);
-  const raw = fs.readFileSync(entry.abs, 'utf8');
   const seen = new Map();
   const ctx = {
     blocks: [], headings: [], byFile, numbers: new Map(),

@@ -1,6 +1,6 @@
 ---
 description: Render this project's documents into a dashboard and open it in the browser
-argument-hint: "[--no-open] [--refresh] [--out <dir>] [--engine clean|mermaid]"
+argument-hint: "[--watch] [--no-open] [--refresh] [--out <dir>] [--engine clean|mermaid]"
 allowed-tools: Bash(npx docucane:*), Bash(node:*)
 ---
 
@@ -31,3 +31,6 @@ Flags, if asked for:
 - `--refresh` re-download the pinned mermaid bundle, the ELK bundle and the Inter woff2
 - `--out <dir>` write the dashboard somewhere else
 - `--engine mermaid` fall back to mermaid's own layout everywhere
+- `--watch` serve the dashboard on localhost and update the open page on every save. It keeps
+  running until stopped, so start it in the background and report the address it prints
+- `--port <n>` the port for `--watch` (default 4747)

@@ -7,6 +7,10 @@ import { DIAGRAMS_JS } from './client/diagrams.mjs';
 const escAttr = (s) => String(s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// the line under the title; the watcher sends it again after every rebuild
+export const countLine = (docs, stamp) =>
+  docs.length + (docs.length === 1 ? ' document' : ' documents') + '  ·  ' + stamp;
+
 export function renderPage({ cfg, docs, fontCss, mermaidTag, elkTag, stamp }) {
   const runtime = {
     title: cfg.title,
@@ -18,7 +22,7 @@ export function renderPage({ cfg, docs, fontCss, mermaidTag, elkTag, stamp }) {
   };
 
   const data = JSON.stringify({ docs }).replace(/</g, '\\u003c');
-  const count = docs.length + (docs.length === 1 ? ' document' : ' documents') + '  ·  ' + stamp;
+  const count = countLine(docs, stamp);
 
   const script = (src) => src ? '<script src="' + escAttr(src) + '"><\/script>' : '';
 

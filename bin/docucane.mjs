@@ -10,10 +10,12 @@
 //   docucane --out <dir>        write somewhere else
 //   docucane --refresh          re-download the vendored assets
 //   docucane --engine mermaid   default every diagram to mermaid's layout
+//   docucane --watch            serve it on localhost, update on every save
 //   docucane init [dir]         wire a project up
 //
 // Output: <out>/index.html plus a vendor/ folder. The page is plain file://
-// HTML - no server, no network, no npm dependencies.
+// HTML - no server, no network, no npm dependencies. --watch serves the same
+// page while you write, and is the only mode that runs a server.
 // ------------------------------------------------------------------
 
 import fs from 'node:fs';
@@ -21,11 +23,12 @@ import path from 'node:path';
 import { loadConfig } from '../src/config.mjs';
 import { build } from '../src/build.mjs';
 import { init } from '../src/init.mjs';
+import { watch, DEFAULT_PORT } from '../src/watch.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
 const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-const TAKES_VALUE = new Set(['--out', '--config', '--title', '--engine', '--docs']);
+const TAKES_VALUE = new Set(['--out', '--config', '--title', '--engine', '--docs', '--port']);
 const positional = () => {
   const out = [];
   for (let i = 0; i < argv.length; i++) {
@@ -45,6 +48,8 @@ Options
   --config <file>    use this config file             (default docs.config.json, searched upwards)
   --title <name>     override the dashboard title
   --engine <name>    default diagram layout: clean | mermaid
+  -w, --watch        serve on localhost and update the open page on every save
+  --port <n>         port for --watch                 (default ${DEFAULT_PORT}, or the next free one)
   --no-open          build without launching a browser
   --refresh          re-download mermaid, ELK and the font
   -h, --help         this
@@ -75,13 +80,24 @@ async function main() {
     docs = path.basename(p);
   }
 
-  const cfg = loadConfig({
+  const cfgArgs = {
     root, docs,
     out: opt('--out', null),
     title: opt('--title', null),
     configPath: opt('--config', null),
     engine: opt('--engine', null),
-  });
+  };
+
+  if (flag('--watch') || flag('-w')) {
+    const port = Number(opt('--port', DEFAULT_PORT));
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      throw new Error('--port must be a port number, got: ' + opt('--port', ''));
+    }
+    await watch(cfgArgs, { port, open: !flag('--no-open'), refresh: flag('--refresh') });
+    return;
+  }
+
+  const cfg = loadConfig(cfgArgs);
 
   await build(cfg, { open: !flag('--no-open'), refresh: flag('--refresh') });
 }

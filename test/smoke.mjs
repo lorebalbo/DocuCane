@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.mjs';
-import { build } from '../src/build.mjs';
+import { build, collectDocs } from '../src/build.mjs';
+import { watch } from '../src/watch.mjs';
 
 let failed = 0;
 const ok = (cond, what) => {
@@ -96,6 +97,74 @@ const strip = (s) => s.replace(/\d{2} \w{3} \d{4}, \d{2}:\d{2}/g, 'STAMP');
 ok(strip(fs.readFileSync(again.outFile, 'utf8')) === strip(html), 'rebuilds are deterministic');
 ok(/cached/.test(again.notes.mermaid), 'the second build used the cached mermaid');
 
+// incremental: a save renders again only what it changed
+const one = collectDocs(cfg);
+fs.appendFileSync(path.join(docs, '10. TENTH.md'), '\nMore text.\n');
+const two = collectDocs(cfg, one.memo);
+ok(two.changed.join(',') === '10-tenth', 'an edit renders only the edited document again — got ' + two.changed.join(','));
+ok(two.docs[0] === one.docs[0], 'an untouched document is reused as it was');
+ok(collectDocs(cfg, two.memo).changed.length === 0, 'a save that changes nothing renders nothing');
+fs.writeFileSync(path.join(docs, '2. SECOND.md'), '# SECOND\n\nText.\n');
+ok(collectDocs(cfg, two.memo).changed.length === 6, 'a new file renders every document again, since links may now resolve');
+
+// watch: the served page is live, the file on disk is not, and a save reaches the page
+const live = await watch({ root: tmp, docs: 'docs', title: 'Smoke Docs' }, { port: 0, open: false, quiet: true });
+const served = await (await fetch(live.url)).text();
+ok(served.includes('__DOCUCANE_LIVE__'), 'the served page carries the live client');
+ok(!fs.readFileSync(r.outFile, 'utf8').includes('__DOCUCANE_LIVE__'), 'index.html on disk stays a plain page');
+
+const tenth = path.join(docs, '10. TENTH.md');
+const seqOf = (st) => +st.version.split(':')[1];
+const events = await eventStream(live.url + '__docucane/events');
+const s1 = await events.next();
+fs.writeFileSync(tenth, '# TENTH\n\n## A heading\n\nEdited.\n');
+const s2 = await events.next();
+ok(seqOf(s2) === seqOf(s1) + 1 && !s2.error && s2.shell === s1.shell, 'a save pushed one new version');
+const data = await (await fetch(live.url + '__docucane/data.json')).json();
+ok(data.version === s2.version && data.docs.find((d) => d.id === '10-tenth').html.includes('Edited.'),
+  'the pushed data carries the edit');
+
+fs.writeFileSync(tenth, '# TENTH\n\n## A heading\n\nEdited.\n');
+await new Promise((done) => setTimeout(done, 500));
+fs.writeFileSync(tenth, '# TENTH\n\n## A heading\n\nEdited twice.\n');
+const s3 = await events.next();
+ok(seqOf(s3) === seqOf(s2) + 1, 'a write that changes nothing pushes nothing');
+
+fs.rmSync(path.join(docs, '2. SECOND.md'));
+const s4 = await events.next();
+ok(seqOf(s4) === seqOf(s3) + 1, 'removing a file pushed a new version');
+
+fs.renameSync(docs, docs + '-away');
+const s5 = await events.next();
+ok(!!s5.error && seqOf(s5) === seqOf(s4), 'a missing folder is reported, and the last good version kept');
+fs.renameSync(docs + '-away', docs);
+const s6 = await events.next();
+ok(!s6.error, 'the folder coming back clears the error');
+events.close();
+await live.close();
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('\n' + (failed ? failed + ' failed' : 'all good'));
 process.exit(failed ? 1 : 0);
+
+// The watcher's server-sent events, one at a time.
+async function eventStream(url) {
+  const ctrl = new AbortController();
+  const res = await fetch(url, { signal: ctrl.signal });
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  const read = async () => {
+    for (;;) {
+      const m = buf.match(/event: state\ndata: (.*)\n\n/);
+      if (m) { buf = buf.slice(m.index + m[0].length); return JSON.parse(m[1]); }
+      const { value, done } = await reader.read();
+      if (done) throw new Error('event stream closed');
+      buf += dec.decode(value, { stream: true });
+    }
+  };
+  return {
+    next: () => Promise.race([read(), new Promise((_, no) => setTimeout(() => no(new Error('no event within 5s')), 5000))]),
+    close: () => ctrl.abort(),
+  };
+}

@@ -813,6 +813,254 @@ export const APP_JS = String.raw`
   addEventListener('resize', schedulePlace);
   if (typeof ResizeObserver !== 'undefined') ro = new ResizeObserver(schedulePlace);
 
+  /* ---------------- live update ---------------- */
+  // Only the page served by docucane --watch calls this; one opened from disk
+  // never does. New documents replace old ones one by one: the sidebar is
+  // rebuilt only if something it shows moved, and the document being read is
+  // patched rather than opened again - same place on the page, same folds, same
+  // comments, and a diagram whose source did not change is carried over as
+  // drawn instead of being laid out again. What did change is marked.
+
+  var BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,pre,table,blockquote,figure,img,hr';
+  var MARK_SHARE = .5;       // past half the page changed, marking all of it says nothing
+  var TOP_EDGE = 64;         // below the sticky top bar
+  var hold = null;
+
+  function applyUpdate(next, count){
+    var old = byId, before = docs;
+    var navOf = function(list){
+      return JSON.stringify(list.map(function(d){ return [d.id, d.title, d.badge, d.group, d.file, d.sections]; }));
+    };
+    var navMoved = navOf(before) !== navOf(next);
+
+    docs = next;
+    byId = {};
+    docs.forEach(function(d){ byId[d.id] = d; });
+    var changed = docs.filter(function(d){
+      return !old[d.id] || JSON.stringify(old[d.id]) !== JSON.stringify(d);
+    }).map(function(d){ return d.id; });
+    var removed = before.filter(function(d){ return !byId[d.id]; }).map(function(d){ return d.id; });
+
+    var small = document.querySelector('.brand small');
+    if (small && count) small.textContent = count;
+
+    // other documents are built again when next opened; when the order or a
+    // title moved, their previous / next links are stale too
+    Object.keys(cache).forEach(function(id){
+      if (id !== current && (navMoved || !byId[id] || changed.indexOf(id) >= 0)) delete cache[id];
+    });
+    if (navMoved) rebuildNav();
+
+    var r = { changed: changed, removed: removed, current: current, count: 0, first: null };
+    if (!byId[current]){
+      // a rename is one document gone and one arrived: follow it
+      var added = changed.filter(function(id){ return !old[id]; });
+      var to = removed.length === 1 && added.length === 1 ? added[0] : docs[0].id;
+      delete cache[current];
+      current = null;
+      history.replaceState(null, '', '#/' + to);
+      show(to);
+      r.current = to;
+      r.moved = true;
+      return r;
+    }
+    if (navMoved || changed.indexOf(current) >= 0) patch(old[current], byId[current], r);
+    return r;
+  }
+
+  function rebuildNav(){
+    var top = nav.scrollTop, open = {};
+    nav.querySelectorAll('.item.open').forEach(function(n){ open[n.dataset.doc] = 1; });
+    nav.textContent = '';
+    buildNav();
+    nav.querySelectorAll('.item').forEach(function(n){
+      n.classList.toggle('active', n.dataset.doc === current);
+      n.classList.toggle('open', !!open[n.dataset.doc] || n.dataset.doc === current);
+    });
+    if (search && search.value) search.dispatchEvent(new Event('input'));
+    nav.scrollTop = top;
+  }
+
+  function patch(was, d, r){
+    var from = main.querySelector('.body-wrap');
+    var at = anchorPoint();
+    delete cache[d.id];
+    var to = bodyFor(d);
+    var marks = changedBlocks(was, d, to);
+    carryDiagrams(from, to);
+
+    main.textContent = '';
+    main.appendChild(to);
+    heads = [].slice.call(main.querySelectorAll('h1[id],h2[id]'));
+    barTitle.textContent = d.title;
+    document.title = d.title + ' — ' + CFG.title;
+    restoreFolds(main);
+    if (window.__diagrams) window.__diagrams.drawAll(main);
+    renderComments();
+    watch();
+    keepPlace(at);
+
+    r.count = marks.length;
+    r.first = marks[0] || null;
+    if (marks.length <= Math.max(3, MARK_SHARE * to.querySelectorAll(BLOCKS).length)){
+      marks.forEach(function(m){ m.classList.add('dc-changed'); });
+    }
+    requestAnimationFrame(sync);
+  }
+
+  // Blocks of the new copy that were not in the old one, compared as markup
+  // before anything (diagrams, comments) is drawn into either. Only the
+  // innermost is kept: an edited list item marks the item, not the list.
+  function changedBlocks(was, d, holder){
+    var out = [];
+    var head = holder.querySelector('.head');
+    if (was.title !== d.title) out.push(head.querySelector('h1'));
+    if (was.subtitle !== d.subtitle && head.querySelector('p')) out.push(head.querySelector('p'));
+
+    var body = holder.querySelector('.doc');
+    var t = document.createElement('template');
+    t.innerHTML = was.html;
+    var left = {};
+    [].slice.call(t.content.querySelectorAll(BLOCKS)).forEach(function(n){
+      left[n.outerHTML] = (left[n.outerHTML] || 0) + 1;
+    });
+    var hits = [].slice.call(body.querySelectorAll(BLOCKS)).filter(function(n){
+      if (!left[n.outerHTML]) return true;
+      left[n.outerHTML]--;
+      return false;
+    }).filter(function(n){
+      // a diagram's source is hidden; the diagram itself is what changed
+      return n.tagName === 'FIGURE' || !n.closest('figure');
+    });
+    var outer = new Set();
+    hits.forEach(function(n){
+      for (var p = n.parentNode; p && p !== body; p = p.parentNode) outer.add(p);
+    });
+    return out.concat(hits.filter(function(n){ return !outer.has(n); }));
+  }
+
+  function srcOf(fig){
+    var s = fig.querySelector('.diagram-src');
+    return s ? s.textContent : '';
+  }
+
+  function carryDiagrams(from, to){
+    if (!from) return;
+    var olds = [].slice.call(from.querySelectorAll('figure[data-diagram]'));
+    var pool = {}, used = new Set(), fresh = [];
+    olds.forEach(function(f){ (pool[srcOf(f)] = pool[srcOf(f)] || []).push(f); });
+    [].slice.call(to.querySelectorAll('figure[data-diagram]')).forEach(function(f){
+      var same = pool[srcOf(f)];
+      if (!same || !same.length) return fresh.push(f);
+      var o = same.shift();
+      used.add(o);
+      f.parentNode.replaceChild(o, f);
+    });
+
+    // Edited diagrams, when they line up one for one with the ones they
+    // replace: the old drawing stays up, faded, until the new one is ready -
+    // no collapse and regrow under the reader - and a layout switched from the
+    // page stays switched.
+    var stale = olds.filter(function(f){ return !used.has(f); });
+    if (stale.length !== fresh.length) return;
+    fresh.forEach(function(f, i){
+      var o = stale[i];
+      if (o.dataset.engine) f.dataset.engine = o.dataset.engine;
+      var out = f.querySelector('.diagram-out'), prev = o.querySelector('.diagram-out');
+      if (!out || !prev || !prev.firstChild) return;
+      while (prev.firstChild) out.appendChild(prev.firstChild);
+      f.classList.add('dc-redraw');
+      if (typeof MutationObserver === 'undefined') return;
+      new MutationObserver(function(_, mo){
+        f.classList.remove('dc-redraw');
+        mo.disconnect();
+      }).observe(out, { childList: true });
+    });
+  }
+
+  // What the reader is looking at: the first visible block under the top bar,
+  // remembered by its text so the same block can be found in the new copy,
+  // plus the heading of its section in case that block is the one edited.
+  function blockKey(n){
+    return n.tagName + '\n' + (n.tagName === 'FIGURE' ? srcOf(n) : n.textContent);
+  }
+
+  function anchorPoint(){
+    var body = main.querySelector('.doc');
+    if (!body || scrollY < 4) return null;
+    var list = [].slice.call(body.querySelectorAll(BLOCKS));
+    for (var i = 0; i < list.length; i++){
+      if (!list[i].offsetParent || list[i].getBoundingClientRect().bottom <= TOP_EDGE) continue;
+      var pick = list[i];
+      for (var j = i + 1; j < list.length && pick.contains(list[j]); j++){
+        if (list[j].offsetParent && list[j].getBoundingClientRect().bottom > TOP_EDGE) pick = list[j];
+      }
+      var key = blockKey(pick), nth = 0;
+      for (var k = 0; list[k] !== pick; k++) if (list[k].tagName === pick.tagName && blockKey(list[k]) === key) nth++;
+      var sec = pick.closest('.sec');
+      var h = sec && document.getElementById(sec.dataset.sec);
+      return {
+        key: key, tag: pick.tagName, nth: nth, top: pick.getBoundingClientRect().top,
+        head: h ? h.id : null, headTop: h ? h.getBoundingClientRect().top : 0
+      };
+    }
+    return null;
+  }
+
+  function findAnchor(at){
+    var list = main.querySelectorAll('.doc ' + BLOCKS.split(',').join(',.doc '));
+    for (var i = 0, n = 0; i < list.length; i++){
+      if (list[i].tagName !== at.tag || blockKey(list[i]) !== at.key) continue;
+      if (n++ !== at.nth) continue;
+      if (list[i].offsetParent) return { el: list[i], top: at.top };
+      break;
+    }
+    var h = at.head && document.getElementById(at.head);
+    return h && main.contains(h) && h.offsetParent ? { el: h, top: at.headTop } : null;
+  }
+
+  // Put that block back where it was, and keep it there while edited diagrams
+  // finish drawing and change the height of what is above it - until the reader
+  // scrolls, clicks or types, which means they have moved on.
+  function keepPlace(at){
+    if (hold) hold.stop();
+    if (!at) return;
+    var target = findAnchor(at);
+    if (!target) return;
+    var until = Date.now() + 4000, stopped = false;
+    var kinds = ['wheel', 'touchstart', 'keydown', 'mousedown'];
+    var stop = function(){
+      stopped = true;
+      kinds.forEach(function(k){ removeEventListener(k, stop, true); });
+      hold = null;
+    };
+    kinds.forEach(function(k){ addEventListener(k, stop, true); });
+    hold = { stop: stop };
+    (function align(){
+      if (stopped) return;
+      if (Date.now() > until || !target.el.isConnected) return stop();
+      var drift = target.el.getBoundingClientRect().top - target.top;
+      if (Math.abs(drift) >= 1) window.scrollBy(0, drift);
+      requestAnimationFrame(align);
+    })();
+  }
+
+  function bring(n){
+    if (!n || !n.isConnected) return;
+    if (hold) hold.stop();
+    unfoldTo(n);
+    n.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    n.classList.remove('dc-changed');
+    void n.offsetWidth;
+    n.classList.add('dc-changed');
+  }
+
+  window.__docucane = {
+    apply: applyUpdate,
+    bring: bring,
+    doc: function(id){ return byId[id]; }
+  };
+
   if (recall('collapsed')) layout.classList.add('collapsed');
   buildNav();
   route();
