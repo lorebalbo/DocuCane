@@ -282,7 +282,7 @@ export const APP_JS = String.raw`
     // node or an arrow belongs to the diagram - it pins that part - so it is
     // left alone here.
     var fig = e.target.closest('.diagram');
-    if (fig && !e.target.closest('svg.dg') && !e.target.closest('.diagram-btn')){
+    if (fig && !e.target.closest('svg.dg') && !e.target.closest('.diagram-head')){
       var svg = fig.querySelector('svg');
       if (svg) openBox(svg);
       return;

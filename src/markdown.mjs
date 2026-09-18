@@ -17,6 +17,27 @@ const SPAN_CLOSE = '@@';
 const BLOCK_RE = /^@@block7f3a:(\d+)@@$/;
 const SPAN_RE = /@@span7f3a:(\d+)@@/g;
 
+// What a diagram's header calls it: its kind, and the title its front matter
+// gives it, if any (a `title:` between two `---` lines, as mermaid reads it).
+const DIAGRAM_KINDS = {
+  flowchart: 'Flowchart', graph: 'Flowchart', erdiagram: 'ER diagram', sequencediagram: 'Sequence diagram',
+  classdiagram: 'Class diagram', statediagram: 'State diagram', 'statediagram-v2': 'State diagram',
+  gantt: 'Gantt chart', pie: 'Pie chart', journey: 'User journey', mindmap: 'Mind map',
+  timeline: 'Timeline', gitgraph: 'Git graph', quadrantchart: 'Quadrant chart',
+};
+function diagramName(code) {
+  let title = '';
+  const body = String(code).replace(/^\s*---\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/, (_, fm) => {
+    const t = fm.match(/^\s*title\s*:\s*(.+?)\s*$/m);
+    if (t) title = t[1].replace(/^(["'])(.*)\1$/, '$2');
+    return '';
+  });
+  const first = body.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('%%')) || '';
+  const kind = DIAGRAM_KINDS[first.split(/\s/)[0].toLowerCase()] || 'Diagram';
+  return '<span class="diagram-name"><span class="diagram-kind">' + esc(kind) + '</span>' +
+    (title ? '<span class="diagram-title">' + esc(title) + '</span>' : '') + '</span>';
+}
+
 export const esc = (s) => s
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -264,12 +285,14 @@ export function parkFences(md, ctx) {
     const n = ctx.blocks.push(
       lang === 'mermaid'
         ? '<figure class="diagram" data-diagram><pre class="diagram-src">' + esc(code) + '</pre>' +
-          '<div class="diagram-out"></div>' +
-          '<div class="diagram-bar">' +
-            '<button class="diagram-btn" data-act="engine" type="button" title="Switch layout engine"></button>' +
-            '<button class="diagram-btn" data-act="zoom" type="button" title="Open full size">Expand</button>' +
-            '<button class="diagram-btn" data-act="fold" type="button" title="Fold the diagram away">Collapse</button>' +
-          '</div></figure>'
+          '<div class="diagram-head">' + diagramName(code) +
+            '<div class="diagram-bar">' +
+              '<button class="diagram-btn" data-act="fold" type="button" title="Fold the diagram away">Collapse</button>' +
+              '<button class="diagram-btn" data-act="zoom" type="button" title="Open full size">Expand</button>' +
+              '<button class="diagram-btn" data-act="engine" type="button" title="Switch layout engine"></button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="diagram-out"></div></figure>'
         : '<div class="code-wrap">' + (lang ? '<span class="code-lang">' + esc(lang) + '</span>' : '') +
           '<pre class="code"><code>' + esc(code) + '</code></pre></div>'
     ) - 1;

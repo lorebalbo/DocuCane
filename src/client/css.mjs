@@ -282,13 +282,20 @@ export const CSS_BAR = `
 /* ------------------------------------------------------------- diagrams */
 
 export const CSS_DIAGRAM = `
-.diagram{position:relative;margin:0 0 22px;padding:22px 18px;background:var(--surface);
+.diagram{position:relative;margin:0 0 22px;padding:0 18px 22px;background:var(--surface);
   border:1px solid var(--line);border-radius:12px;text-align:center;overflow-x:auto;max-width:100%}
 .diagram-src{display:none}
 .diagram svg{max-width:100%;height:auto}
-.diagram-bar{position:absolute;top:9px;right:9px;display:flex;gap:5px;
-  opacity:0;transition:opacity .15s}
-.diagram:hover .diagram-bar,.diagram-bar:focus-within{opacity:1}
+/* The header: what the diagram is, and what can be done with it. It spans the
+   frame (the negative margins undo the frame's side padding) and stays put
+   while a diagram wider than the frame is scrolled sideways. */
+.diagram-head{position:sticky;left:0;z-index:4;display:flex;align-items:center;gap:12px;min-height:40px;
+  margin:0 -18px 20px;padding:6px 8px 6px 16px;border-bottom:1px solid var(--line);
+  background:var(--surface);border-radius:12px 12px 0 0;text-align:left}
+.diagram-name{flex:1;min-width:0;display:flex;align-items:baseline;gap:9px;overflow:hidden;white-space:nowrap}
+.diagram-kind{flex:none;font-size:10px;font-weight:var(--bold);letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.diagram-title{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;font-weight:var(--semi);color:var(--ink)}
+.diagram-bar{flex:none;display:flex;gap:5px}
 .diagram-btn{padding:3px 9px;font:inherit;font-size:11px;color:var(--muted);
   background:var(--surface-2);border:1px solid var(--line);border-radius:7px;cursor:pointer}
 .diagram-btn:hover{color:var(--ink);border-color:#c3c9d4}
@@ -296,17 +303,14 @@ export const CSS_DIAGRAM = `
 .diagram:has(svg):hover{border-color:#c3c9d4}
 .diagram .fail{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:left;white-space:pre-wrap}
 .diagram-note{margin-top:10px;font-size:11px;color:var(--faint);text-align:center}
-/* A collapsed diagram is its frame and nothing else: a plain white box the
+/* A collapsed diagram is its header and nothing else: a plain white box the
    height of a line, which a click opens again. */
-.diagram.is-folded{display:flex;align-items:center;justify-content:center;height:44px;padding:0 18px;
-  overflow:hidden;cursor:pointer}
-.diagram.is-folded::before{content:'Diagram collapsed · click to show';font-size:11.5px;color:var(--faint)}
+.diagram.is-folded{padding-bottom:0;overflow:hidden;cursor:pointer}
+.diagram.is-folded .diagram-head{margin-bottom:0;border-bottom-color:transparent}
 .diagram.is-folded:hover{border-color:#c3c9d4}
-.diagram.is-folded:hover::before{color:var(--muted)}
 .diagram.is-folded .diagram-out,.diagram.is-folded .diagram-note,
 .diagram.is-folded .diagram-btn:not([data-act=fold]){display:none}
-.diagram.is-folded .diagram-bar{top:50%;transform:translateY(-50%)}
-@media print{.diagram.is-folded{display:none}}
+@media print{.diagram.is-folded{display:none}.diagram-bar{display:none}}
 
 /* A wide diagram is allowed to spill a little past the text column - the point
    of the column is to keep prose readable, and a diagram is not prose. */
