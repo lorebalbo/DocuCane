@@ -687,8 +687,12 @@ export const DIAGRAMS_JS = String.raw`
     var ratio = String(Math.max(1, Math.min(4, avail / Math.max(360, innerHeight * .8))).toFixed(2));
     var packed = { 'elk.aspectRatio': ratio };
     // ELK folds a layout that runs across into rows, not one that runs down:
-    // a chain laid out sideways and folded is the tower turned into a block
+    // a chain laid out sideways and folded is the tower turned into a block.
+    // Its 'improved' wrapped edges lose the far half of a relationship that
+    // crosses the fold and skips a row - the line stops short of its entity -
+    // so they are left as the fold first routes them.
     var folded = { 'elk.aspectRatio': ratio, 'elk.layered.wrapping.strategy': 'MULTI_EDGE',
+                   'elk.layered.wrapping.multiEdge.improveWrappedEdges': 'false',
                    'elk.layered.wrapping.additionalEdgeSpacing': '24' };
     var shapes = [{ dir: dir, extra: packed }];
     if (said && !across) return shapes;
@@ -703,8 +707,27 @@ export const DIAGRAMS_JS = String.raw`
     return { h: res.height * k, legible: k >= ER_MIN_SCALE, k: k };
   }
 
+  // Every relationship starts on one entity and ends on the other. A layout
+  // where one does not - whatever ELK got wrong - is never the one drawn.
+  function connected(res){
+    var at = {};
+    (res.children || []).forEach(function(c){ at[c.id] = c; });
+    var on = function(p, n){
+      return p && n && p.x >= n.x - 3 && p.x <= n.x + n.width + 3 && p.y >= n.y - 3 && p.y <= n.y + n.height + 3;
+    };
+    return (res.edges || []).every(function(e){
+      var secs = e.sections || [];
+      if (!secs.length) return false;
+      return on(secs[0].startPoint, at[(e.sources || [])[0]]) &&
+             on(secs[secs.length - 1].endPoint, at[(e.targets || [])[0]]);
+    });
+  }
+
   function pickShape(tries, avail){
     var best = null;
+    var whole = tries.filter(function(t){ return connected(t.res); });
+    // as written stays the fallback, even broken, rather than nothing at all
+    tries = whole.length ? whole : tries.slice(0, 1);
     tries.forEach(function(t, i){
       var c = erCost(t.res, avail);
       t.cost = c;
