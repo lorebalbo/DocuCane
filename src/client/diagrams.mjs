@@ -2045,10 +2045,15 @@ export const DIAGRAMS_JS = String.raw`
         // An ER chart turns dense sooner: entities are big, so fewer of them
         // fill the frame and the relationships start crossing earlier.
         var openable = data.__er && data.nodes.some(function(n){ return n._details; });
-        if ((data.edges || []).length >= (data.__er ? 4 : 6) || openable){
+        // descriptions only show on request, so the diagram says how to ask
+        var described = data.__er && data.nodes.some(function(n){
+          return (n._desc && n._desc.length) || (n._details && n._details.rows.some(function(r){ return r.desc; }));
+        });
+        if ((data.edges || []).length >= (data.__er ? 4 : 6) || openable || described){
           if (!note){ note = el('div','diagram-note'); fig.appendChild(note); }
           note.textContent = data.__er
             ? 'Hover a relationship or an entity to isolate it · click to pin · Esc to release' +
+              (described ? ' · hold ' + TIP_KEY_NAME + ' on a table or a column to read its description' : '') +
               (openable ? ' · the button in an entity’s corner opens it to every column' : '')
             : 'Hover an arrow or a box to isolate it · click to pin · Esc to release';
         } else if (note) note.remove();
@@ -2221,7 +2226,8 @@ export const DIAGRAMS_JS = String.raw`
 
   document.addEventListener('mousemove', function(e){
     var hit = targetOf(e);
-    var said = hit && hit.kind === 'node' && tipTarget(e);
+    lastPointer = { x: e.clientX, y: e.clientY };
+    var said = hit && hit.kind === 'node' && tipKeyHeld(e) && tipTarget(e);
     if (said) showTip(said); else hideTip();
     if (!hit){
       if (!pinned) [].slice.call(document.querySelectorAll('svg.dg.has-hot')).forEach(clear);
@@ -2332,10 +2338,31 @@ export const DIAGRAMS_JS = String.raw`
      header, open or not. What a column holds has no room in the compact table,
      so it appears while the pointer is on that column's row; an opened entity
      writes it out, and says nothing more on hover. Either shows above what it
-     is about when there is room, below it when not, and goes when the pointer
+     is about when there is room, below it when not.
+
+     A description is asked for, not sprung on the reader: it shows only while
+     a key is held - Ctrl, or Option on a Mac, where Ctrl turns a click into a
+     right-click - with the pointer on the header or the row. Holding the key
+     first and moving over the entity works, and so does pressing it once the
+     pointer is already there. It goes when the key is let go, the pointer
      leaves, the page scrolls or a click lands. */
 
   var tip = null, tipFor = null, tipTimer = 0;
+  var IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+  var TIP_KEY = IS_MAC ? 'Alt' : 'Control';
+  var TIP_KEY_NAME = IS_MAC ? '⌥ Option' : 'Ctrl';
+  function tipKeyHeld(e){ return IS_MAC ? e.altKey : e.ctrlKey; }
+  // where the pointer last was, for a key pressed without the mouse moving
+  var lastPointer = null;
+
+  document.addEventListener('keydown', function(e){
+    if (e.key !== TIP_KEY || e.repeat || !lastPointer) return;
+    var at = document.elementFromPoint(lastPointer.x, lastPointer.y);
+    var said = at && tipTarget({ target: at, clientY: lastPointer.y });
+    if (said) showTip(said);
+  });
+  document.addEventListener('keyup', function(e){ if (e.key === TIP_KEY) hideTip(); });
+  addEventListener('blur', hideTip);
 
   function escHtml(s){
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -2363,6 +2390,7 @@ export const DIAGRAMS_JS = String.raw`
     if (tipFor === target) return;
     hideTip();
     tipFor = target;
+    // asked for with a key: shown at once, on the next frame
     tipTimer = setTimeout(function(){
       if (tipFor !== target || !target.isConnected) return;
       var lines;
@@ -2379,7 +2407,7 @@ export const DIAGRAMS_JS = String.raw`
       if (top < 8) top = below + 8;
       tip.style.left = Math.round(Math.min(Math.max(8, box.left), vw - w - 8)) + 'px';
       tip.style.top = Math.round(top) + 'px';
-    }, 160);
+    }, 0);
   }
 
   function hideTip(){
