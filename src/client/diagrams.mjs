@@ -595,7 +595,7 @@ export const DIAGRAMS_JS = String.raw`
     return { w: Math.round(w), h: Math.round(h) };
   }
 
-  function buildGraph(data, dir){
+  function buildGraph(data, dir, extra){
     var sp = data.__er ? SPACING.er : SPACING.flow;
     var kids = {};
     data.nodes.forEach(function(n){
@@ -639,11 +639,7 @@ export const DIAGRAMS_JS = String.raw`
       return ed;
     });
 
-    return {
-      id: 'root',
-      children: (kids.__root || []).map(build),
-      edges: edges,
-      layoutOptions: {
+    var opts = {
         'elk.algorithm': 'layered',
         'elk.direction': dir,
         'elk.edgeRouting': 'ORTHOGONAL',
@@ -665,8 +661,61 @@ export const DIAGRAMS_JS = String.raw`
         'elk.spacing.labelNode': '10',
         'elk.edgeLabels.placement': 'CENTER',
         'elk.padding': '[top='+sp.pad+',left='+sp.pad+',bottom='+sp.pad+',right='+sp.pad+']'
-      }
     };
+    for (var k in extra || {}) opts[k] = extra[k];
+    return { id: 'root', children: (kids.__root || []).map(build), edges: edges, layoutOptions: opts };
+  }
+
+  /* ---------------------------------------------------- the shape of an ER
+     A layered layout puts every step of a chain of relationships on a new
+     layer, so a schema written top to bottom comes out as a tower: a document
+     much longer than it needs to be, and a diagram that is never on screen in
+     one piece. The column is wide, and an ER diagram has no reading direction
+     to keep, so it is laid out more than one way - as written, turned on its
+     side, and on its side with a long chain folded into rows - and the one
+     that takes the least height at the width it is shown in, while staying
+     readable, is kept. A direction the source writes is kept: across can
+     still be folded, down is left as it is. */
+
+  // below this, fitted into the column, an entity's text is too small to read
+  var ER_MIN_SCALE = .8;
+
+  function erShapes(code, dir, avail){
+    var said = /^\s*direction\s+(TB|TD|BT|LR|RL)\s*$/im.test(String(code));
+    var across = dir === 'RIGHT' || dir === 'LEFT';
+    // the shape a page wants: as wide as the column, no taller than most of a screen
+    var ratio = String(Math.max(1, Math.min(4, avail / Math.max(360, innerHeight * .8))).toFixed(2));
+    var packed = { 'elk.aspectRatio': ratio };
+    // ELK folds a layout that runs across into rows, not one that runs down:
+    // a chain laid out sideways and folded is the tower turned into a block
+    var folded = { 'elk.aspectRatio': ratio, 'elk.layered.wrapping.strategy': 'MULTI_EDGE',
+                   'elk.layered.wrapping.additionalEdgeSpacing': '24' };
+    var shapes = [{ dir: dir, extra: packed }];
+    if (said && !across) return shapes;
+    if (!across) shapes.push({ dir: 'RIGHT', extra: packed });
+    shapes.push({ dir: across ? dir : 'RIGHT', extra: folded });
+    return shapes;
+  }
+
+  // the height a layout takes once fitted to the column, and whether it can still be read
+  function erCost(res, avail){
+    var k = avail ? Math.min(1, avail / Math.max(1, res.width)) : 1;
+    return { h: res.height * k, legible: k >= ER_MIN_SCALE, k: k };
+  }
+
+  function pickShape(tries, avail){
+    var best = null;
+    tries.forEach(function(t, i){
+      var c = erCost(t.res, avail);
+      t.cost = c;
+      if (!best){ best = t; return; }
+      var b = best.cost;
+      if (c.legible !== b.legible){ if (c.legible) best = t; return; }
+      if (!c.legible){ if (c.k > b.k) best = t; return; }
+      // as written wins unless another shape is clearly shorter
+      if (c.h < b.h * (best === tries[0] ? .85 : 1)) best = t;
+    });
+    return best;
   }
 
   /* ------------------------------------------------------------ svg output */
@@ -1843,8 +1892,8 @@ export const DIAGRAMS_JS = String.raw`
     });
   }
 
-  // The lanes are fitted to the width the diagram had when it was drawn. When
-  // that changes - the window resized, the sidebar folded away, a folded
+  // The lanes of a sequence, and the shape of an ER diagram, are fitted to the
+  // width the diagram had when it was drawn. When that changes - the window resized, the sidebar folded away, a folded
   // section opened for the first time - it is drawn again for the new width.
   function refitOnResize(fig, out){
     if (fig._seqRefit || typeof ResizeObserver === 'undefined') return;
@@ -1942,8 +1991,20 @@ export const DIAGRAMS_JS = String.raw`
       var raw = (db.getDirection && db.getDirection()) || 'TB';
       var dir = DIRS[String(raw).toUpperCase()] || 'DOWN';
       var avail = fig.querySelector('.diagram-out').clientWidth;
-      var layout = function(){ return elk.layout(buildGraph(data, dir)); };
-      return layout().then(function(res){
+      var shape = { dir: dir, extra: null };
+      var layout = function(){ return elk.layout(buildGraph(data, shape.dir, shape.extra)); };
+      var first = !data.__er || !avail ? layout() : Promise.all(erShapes(code, dir, avail).map(function(sh){
+        return elk.layout(buildGraph(data, sh.dir, sh.extra)).then(function(res){
+          return { dir: sh.dir, extra: sh.extra, res: res };
+        }, function(){ return null; });
+      })).then(function(tries){
+        tries = tries.filter(Boolean);
+        if (!tries.length) return layout();
+        var best = pickShape(tries, avail);
+        shape = { dir: best.dir, extra: best.extra };
+        return best.res;
+      });
+      return first.then(function(res){
         // Relationships routed around an opened entity add width the entity
         // alone did not have. If that takes the diagram past the page, the
         // entity's descriptions give that width back and it is laid out once more.
@@ -1955,6 +2016,8 @@ export const DIAGRAMS_JS = String.raw`
         var out = fig.querySelector('.diagram-out');
         out.textContent = '';
         out.appendChild(drawSvg(res, data));
+        // the shape was chosen for this width: another width may want another
+        if (data.__er){ fig._seqWidth = avail; refitOnResize(fig, out); }
         var note = fig.querySelector('.diagram-note');
         // An ER chart turns dense sooner: entities are big, so fewer of them
         // fill the frame and the relationships start crossing earlier.
