@@ -814,6 +814,10 @@ export const DIAGRAMS_JS = String.raw`
     m.rows.forEach(function(row, i){
       var top = y + m.headH + i * ER_ROW_H, cy = top + ER_ROW_H/2;
       var rg = mk('g', null, 'dg-er-row');
+      // what the column holds, shown while the pointer is on its row: the
+      // compact table has no room for it (an opened one writes it out)
+      var desc = n._details && n._details.rows[i] && n._details.rows[i].desc;
+      if (desc) rg.setAttribute('data-desc', JSON.stringify([desc]));
       // a band under the row, lit on hover: on a wide entity it is what keeps
       // the eye on one line while it travels from the type across to the keys
       var last = i === m.rows.length - 1, rr = r - 1, x1 = x + 1, x2 = x + w - 1, y2 = y + h - 1;
@@ -2095,8 +2099,8 @@ export const DIAGRAMS_JS = String.raw`
 
   document.addEventListener('mousemove', function(e){
     var hit = targetOf(e);
-    var entity = hit && hit.kind === 'node' && e.target.closest('.dg-node[data-desc]');
-    if (entity) showTip(entity); else hideTip();
+    var said = hit && hit.kind === 'node' && tipTarget(e);
+    if (said) showTip(said); else hideTip();
     if (!hit){
       if (!pinned) [].slice.call(document.querySelectorAll('svg.dg.has-hot')).forEach(clear);
       return;
@@ -2200,11 +2204,14 @@ export const DIAGRAMS_JS = String.raw`
     }, 700);
   }
 
-  /* ------------------------------------------------ what an entity is for
+  /* ------------------------------------------- what an entity, a column is for
      What is written about an entity as a whole is not one of its columns, so
-     it is not in its table: it appears beside the entity while the pointer is
-     on it, open or not - above it when there is room, below its header when
-     not - and goes when the pointer leaves, the page scrolls or a click lands. */
+     it is not in its table: it appears while the pointer is on the entity's
+     header, open or not. What a column holds has no room in the compact table,
+     so it appears while the pointer is on that column's row; an opened entity
+     writes it out, and says nothing more on hover. Either shows above what it
+     is about when there is room, below it when not, and goes when the pointer
+     leaves, the page scrolls or a click lands. */
 
   var tip = null, tipFor = null, tipTimer = 0;
 
@@ -2218,22 +2225,36 @@ export const DIAGRAMS_JS = String.raw`
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   }
 
-  function showTip(node){
-    if (tipFor === node) return;
+  // The element whose description the pointer is on, if any: a column's row,
+  // or the entity when the pointer is on its header - the band with the title,
+  // or the whole box of an entity with no columns.
+  function tipTarget(e){
+    var row = e.target.closest('.dg-er-row[data-desc]');
+    if (row) return row;
+    var node = e.target.closest('.dg-node[data-desc]');
+    if (!node || e.target.closest('.dg-er-row')) return null;
+    var rule = node.querySelector('.dg-er-rule');
+    return !rule || e.clientY <= rule.getBoundingClientRect().bottom + 1 ? node : null;
+  }
+
+  function showTip(target){
+    if (tipFor === target) return;
     hideTip();
-    tipFor = node;
+    tipFor = target;
     tipTimer = setTimeout(function(){
-      if (tipFor !== node || !node.isConnected) return;
+      if (tipFor !== target || !target.isConnected) return;
       var lines;
-      try { lines = JSON.parse(node.getAttribute('data-desc')); } catch (err) { return; }
+      try { lines = JSON.parse(target.getAttribute('data-desc')); } catch (err) { return; }
       tip = el('div', 'dg-tip');
       tip.innerHTML = lines.map(function(l){ return '<p>' + inlineMd(l) + '</p>'; }).join('');
       document.body.appendChild(tip);
-      var box = (node.querySelector('.dg-node-shape') || node).getBoundingClientRect();
-      var head = node.querySelector('.dg-er-rule');
+      var isRow = target.classList.contains('dg-er-row');
+      var box = (target.querySelector(isRow ? '.dg-er-band' : '.dg-node-shape') || target).getBoundingClientRect();
+      var head = !isRow && target.querySelector('.dg-er-rule');
+      var below = isRow ? box.bottom : head ? head.getBoundingClientRect().bottom : box.top + 34;
       var vw = document.documentElement.clientWidth, w = tip.offsetWidth, h = tip.offsetHeight;
       var top = box.top - h - 8;
-      if (top < 8) top = (head ? head.getBoundingClientRect().bottom : box.top + 34) + 8;
+      if (top < 8) top = below + 8;
       tip.style.left = Math.round(Math.min(Math.max(8, box.left), vw - w - 8)) + 'px';
       tip.style.top = Math.round(top) + 'px';
     }, 160);

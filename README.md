@@ -70,8 +70,8 @@ A schema document says more about a column than Mermaid's syntax can hold — wh
 null, its default, what it references, a real description — so those go in `%%` lines under the
 column, which Mermaid ignores. A button in the entity's corner then **opens the entity in place**
 to the whole table — type and length, keys, null, default and description, with its constraints
-above — and the diagram is laid out again around it; what the entity is for shows while the pointer
-is on it. See [docs/2. DIAGRAMS.md](./docs/2.%20DIAGRAMS.md#entity-sheet).
+above — and the diagram is laid out again around it. In the compact table, what the entity is for
+shows while the pointer is on its header, and what a column holds while it is on that column. See [docs/2. DIAGRAMS.md](./docs/2.%20DIAGRAMS.md#entity-sheet).
 
 ### Sequence diagrams stay readable at column width
 
