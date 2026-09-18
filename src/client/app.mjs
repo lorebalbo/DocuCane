@@ -216,10 +216,13 @@ export const APP_JS = String.raw`
   }
   function zoom(mult){ scale = Math.min(8, Math.max(.2, scale * mult)); apply(); }
 
-  function openBox(svg){
+  // The diagram shown full size is a copy; it remembers the one on the page, so
+  // a change made from the copy (an entity opened) can be made to the original.
+  function stageCopy(svg){
     stage.innerHTML = '';
     var clone = svg.cloneNode(true);
     clone.removeAttribute('style');
+    clone._source = svg;
 
     // size from the viewBox: the rendered rect depends on the column it came from
     var vb = (clone.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
@@ -228,16 +231,30 @@ export const APP_JS = String.raw`
     clone.setAttribute('width', w);
     clone.setAttribute('height', h);
     stage.appendChild(clone);
+    return { svg: clone, w: w, h: h };
+  }
+
+  function openBox(svg){
+    var copy = stageCopy(svg);
     box.classList.add('on');
 
     // fit the whole diagram, but never so small it stops being readable:
     // tall flowcharts open at a legible scale and are panned instead
-    var fitW = (innerWidth - 120) / w, fitH = (innerHeight - 140) / h;
+    var fitW = (innerWidth - 120) / copy.w, fitH = (innerHeight - 140) / copy.h;
     scale = Math.min(2, Math.max(Math.min(fitW, fitH), Math.min(.75, fitW)));
     tx = 0; ty = 0; apply();
   }
   function closeBox(){ box.classList.remove('on'); stage.innerHTML = ''; }
   window.__lightbox = openBox;
+  // a redrawn diagram replaces the one on view, at the same zoom and pan...
+  openBox.swap = function(svg){
+    if (!box.classList.contains('on')) return null;
+    var copy = stageCopy(svg);
+    apply();
+    return copy.svg;
+  };
+  // ...which the caller then nudges, to keep what the reader was looking at in place
+  openBox.nudge = function(dx, dy){ tx += dx; ty += dy; apply(); };
 
   // Dragging pans, but a plain click inside the diagram is the reader talking
   // to the diagram (pinning an arrow), so only start a drag on empty space.
@@ -959,13 +976,14 @@ export const APP_JS = String.raw`
 
     // Edited diagrams, when they line up one for one with the ones they
     // replace: the old drawing stays up, faded, until the new one is ready -
-    // no collapse and regrow under the reader - and a layout switched from the
-    // page stays switched.
+    // no collapse and regrow under the reader - and a layout switched, or an
+    // entity opened, from the page stays that way.
     var stale = olds.filter(function(f){ return !used.has(f); });
     if (stale.length !== fresh.length) return;
     fresh.forEach(function(f, i){
       var o = stale[i];
       if (o.dataset.engine) f.dataset.engine = o.dataset.engine;
+      if (o._open) f._open = o._open;
       var out = f.querySelector('.diagram-out'), prev = o.querySelector('.diagram-out');
       if (!out || !prev || !prev.firstChild) return;
       while (prev.firstChild) out.appendChild(prev.firstChild);

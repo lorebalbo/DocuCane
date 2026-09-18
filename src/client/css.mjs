@@ -207,8 +207,15 @@ h4.sec-head,h5.sec-head,h6.sec-head{margin:0 0 8px;font-size:14px;font-weight:va
 .doc a:not(.h-anchor):hover{border-bottom-color:var(--ink);background:rgba(255,255,255,.55)}
 .doc hr{margin:32px 0;border:0;border-top:1px solid var(--line)}
 .doc blockquote{margin:0 0 18px;padding:2px 0 2px 17px;border-left:2px solid #c3c9d4;color:var(--muted)}
-.doc code{font-family:var(--mono);font-size:.84em;background:var(--surface);
-  border:1px solid var(--line);border-radius:5px;padding:1px 5px;white-space:nowrap}
+/* Inline code is a wash laid inside the sentence, not a bordered chip dropped
+   into it: no outline, a tint of the ink instead of a white plate, and padding
+   in em so the box tracks the text it sits in - including inside a heading or
+   a white table cell, where a white plate would have vanished. */
+.doc code{font-family:var(--mono);font-size:.855em;letter-spacing:-.008em;
+  background:rgba(20,26,38,.06);border-radius:4px;padding:.13em .32em;
+  color:#333a4a;white-space:nowrap}
+.doc a:not(.h-anchor) code{background:rgba(27,86,214,.075);color:#22315a}
+.doc h1 code,.doc h2 code,.doc h3 code,.doc h4 code{font-size:.88em;font-weight:var(--semi)}
 .doc del{color:var(--faint)}
 .doc img{max-width:100%;border-radius:10px}
 
@@ -219,7 +226,7 @@ h4.sec-head,h5.sec-head,h6.sec-head{margin:0 0 8px;font-size:14px;font-weight:va
 pre.code{margin:0;padding:15px 17px;overflow-x:auto;max-width:100%;background:var(--surface);
   border:1px solid var(--line);border-radius:11px}
 pre.code code{font-family:var(--mono);font-size:12.5px;line-height:1.62;white-space:pre;
-  background:none;border:0;padding:0;color:#2a3040}
+  letter-spacing:0;background:none;border:0;padding:0;color:#2a3040}
 
 /* ---- tables ---- */
 .table-wrap{margin:0 0 20px;overflow-x:auto;max-width:100%;background:var(--surface);
@@ -359,6 +366,48 @@ svg.dg .dg-el.is-hot,svg.dg .dg-el.is-near{opacity:1}
 .dg-el.is-hot .dg-card-ring{stroke:var(--dg-hot);stroke-width:1.8}
 .dg-el.is-hot .dg-card-dot{fill:var(--dg-hot)}
 .dg-el.is-hot .dg-er-head{fill:var(--dg-er-head-hot)}
+
+/* the button in an entity's header that opens it to every column, and closes it */
+.dg-er-more{cursor:pointer}
+.dg-er-more-box{fill:var(--surface);stroke:var(--dg-node-line);stroke-width:1;transition:fill .12s,stroke .12s}
+.dg-er-more-icon{fill:none;stroke:var(--muted);stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.dg-er-more:hover .dg-er-more-box{fill:var(--dg-hot-soft);stroke:var(--dg-hot)}
+.dg-er-more:hover .dg-er-more-icon{stroke:var(--dg-hot)}
+.dg-er-more.is-open .dg-er-more-box{fill:var(--dg-er-badge-pk);stroke:var(--dg-er-badge-pk-line)}
+.dg-er-more.is-open .dg-er-more-icon{stroke:var(--ink)}
+.dg-er-more.is-open:hover .dg-er-more-box{fill:var(--dg-hot-soft);stroke:var(--dg-hot)}
+
+/* ---- an opened entity ----
+   The same table with every column a schema document writes down, and the
+   notes above it - in the faces and weights of the compact table, so opening
+   an entity adds columns without changing how the ones already there read.
+   The sizes here are the ones the layout measures with: change them together. */
+.dg-er-x-label{fill:var(--faint);font-size:9.2px;font-weight:620;letter-spacing:.07em}
+.dg-er-x-name{font-weight:560}
+.dg-er-x-code{font-family:var(--mono);font-size:10.8px;fill:#3a4150}
+.dg-er-x-bold{font-weight:620}
+.dg-er-note,.dg-er-desc{fill:#3a4150;font-size:11.6px}
+.dg-er-bullet{fill:var(--faint)}
+.dg-er-ref{fill:var(--muted);font-size:10.6px}
+/* text.dg-er-def, to outweigh svg.dg text, which sets the family of every label */
+svg.dg text.dg-er-def{fill:#3a4150;font-family:var(--mono);font-size:10.8px}
+.dg-er-none{fill:var(--faint);font-size:11px}
+.dg-er-notnull{fill:var(--faint);font-size:9.4px;font-weight:600;letter-spacing:.02em}
+.dg-er-null{fill:var(--dg-seq-note);stroke:var(--dg-seq-note-line);stroke-width:.8}
+.dg-er-null-text{fill:var(--dg-seq-note-ink);font-size:9.4px;font-weight:600;letter-spacing:.02em}
+/* laid out again around it: the entities glide (inline transitions), and the
+   relationships fade back in once their new routes are drawn */
+.dg-reflow .dg-edges,.dg-reflow .dg-labels{animation:dg-fade-in .3s ease-out .18s both}
+.dg-er-opening{animation:dg-fade-in .24s ease-out both}
+@keyframes dg-fade-in{from{opacity:0}}
+/* what an entity is for, shown while the pointer is on it */
+.dg-tip{position:fixed;z-index:70;max-width:min(440px,calc(100vw - 16px));padding:9px 12px;text-align:left;
+  font-size:12.5px;line-height:1.5;color:#e9ecf2;background:var(--ink);border-radius:9px;pointer-events:none;
+  box-shadow:0 12px 32px -12px rgba(20,26,40,.5);animation:dg-fade-in .12s ease-out}
+.dg-tip p{margin:0}
+.dg-tip p+p{margin-top:6px}
+.dg-tip code{font-family:var(--mono);font-size:.88em;background:rgba(255,255,255,.13);border-radius:4px;padding:.05em .3em}
+@media print{.dg-er-more,.dg-tip{display:none}}
 
 /* ---- sequences ----
    Participants are nodes and messages are edges, so hovering and pinning run

@@ -66,6 +66,13 @@ Cardinality is standard crow's-foot notation, drawn against the entity where it 
 works exactly as above — hover a relationship and both entities light up, hover an entity and you
 get everything that touches it.
 
+A schema document says more about a column than Mermaid's syntax can hold — whether it can be
+null, its default, what it references, a real description — so those go in `%%` lines under the
+column, which Mermaid ignores. A button in the entity's corner then **opens the entity in place**
+to the whole table — type and length, keys, null, default and description, with its constraints
+above — and the diagram is laid out again around it; what the entity is for shows while the pointer
+is on it. See [docs/2. DIAGRAMS.md](./docs/2.%20DIAGRAMS.md#entity-sheet).
+
 ### Sequence diagrams stay readable at column width
 
 Mermaid widens every gap between two lifelines until the longest label crossing it fits, so a

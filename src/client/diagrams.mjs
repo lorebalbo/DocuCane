@@ -212,11 +212,144 @@ export const DIAGRAMS_JS = String.raw`
   var ER_BADGE_H = 14, ER_BADGE_PAD = 5, ER_BADGE_GAP = 4;
   // How much clear line a cardinality glyph needs at the end of a relationship.
   var ER_END_CLEAR = 22;
+  // A comment up to this wide is a note, read in the table; a longer one is a
+  // description, and the opened entity is where it is read.
+  var ER_NOTE_W = 170;
+  // the room the header gives the button that opens and closes the entity
+  var ER_MORE = 24;
+  // An opened entity: its description column wraps at ER_OPEN_DESC_W, its
+  // notes at no less than ER_OPEN_NOTES_W, code in them is set at ER_CODE_FS.
+  var ER_OPEN_DESC_W = 300, ER_OPEN_NOTES_W = 380, ER_OPEN_HEAD_H = 24, ER_OPEN_GAP = 16;
+  var ER_LABEL_FS = 9.2, ER_CODE_FS = 10.8, ER_REF_FS = 10.6;
+
+  /* ------------------------------------------------------- entity details
+     Mermaid gives a column a type, a name, its keys and one comment. A schema
+     document needs more - whether the column can be null, its default, what it
+     references, a description longer than a diagram can hold - and so does the
+     entity itself. Those are written in %% lines, which mermaid ignores, so the
+     same source still renders wherever mermaid does:
+
+       DATASET["ctl.dataset"] {
+         %% What the table is for.              <- under the brace: the entity
+         %% - a convention, or a constraint     <- a list item
+         VARCHAR(50) dataset_code PK "What the column holds"
+         %% not null · default 'x'              <- under a column: that column
+         %% references ctl.other
+       }
+
+     A %% line under a column made only of null / not null / default ... /
+     references ..., separated by a middle dot or a semicolon, sets those; any
+     other text there is more description. */
+
+  var ER_WORD = /^(?:not\s+null|null|nullable|default(?:\s*:)?(?:\s+.*)?|references?(?:\s*:)?\s+.+|ref(?:\s*:)?\s+.+)$/i;
+
+  function erDetails(code){
+    var found = {}, cur = null, col = null;
+    String(code).split(/\r?\n/).forEach(function(raw){
+      var line = raw.trim();
+      if (!cur){
+        var head = line.match(/^(?:"([^"]+)"|([^\s\["{]+))\s*(?:\[[^\]]*\])?\s*\{\s*$/);
+        if (head){
+          var name = head[1] || head[2];
+          cur = found[name] = found[name] || { notes: [], cols: [] };
+          col = null;
+        }
+        return;
+      }
+      if (/^\}/.test(line)){ cur = null; return; }
+      var c = line.match(/^%%(?!\{)\s?(.*)$/);
+      if (c){ (col ? col.lines : cur.notes).push(c[1]); return; }
+      if (!line) return;
+      col = { lines: [] };
+      cur.cols.push(col);
+    });
+    return found;
+  }
+
+  function erColumn(lines){
+    var meta = { nullable: null, def: '', ref: '', more: [] };
+    lines.forEach(function(line){
+      var bits = line.split(/\s+·\s+|\s*;\s*/).map(function(b){ return b.trim(); }).filter(Boolean);
+      if (!bits.length || !bits.every(function(b){ return ER_WORD.test(b); })){
+        if (line.trim()) meta.more.push(line.trim());
+        return;
+      }
+      bits.forEach(function(b){
+        var m;
+        if (/^not\s+null$/i.test(b)) meta.nullable = false;
+        else if (/^(?:null|nullable)$/i.test(b)) meta.nullable = true;
+        else if ((m = b.match(/^default(?:\s*:)?\s*(.*)$/i))) meta.def = m[1].replace(/^\x60(.*)\x60$/, '$1');
+        else if ((m = b.match(/^ref(?:erences?)?(?:\s*:)?\s+(.+)$/i))) meta.ref = m[1];
+      });
+    });
+    return meta;
+  }
+
+  // Everything an opened entity shows, gathered before layout: the header
+  // needs to know whether it carries the button.
+  function attachDetails(data, code){
+    var found = erDetails(code), nullKnown = false;
+    var drafts = data.nodes.filter(function(n){ return !n.isGroup; }).map(function(n){
+      var d = found[n.label] || found[n.id] || { notes: [], cols: [] };
+      var rows = (n.attributes || []).map(function(a, i){
+        var meta = erColumn((d.cols[i] || { lines: [] }).lines);
+        var type = decode(a.type == null ? '' : a.type).trim();
+        var sized = type.match(/^(.*?)\s*\(\s*([^)]*?)\s*\)$/);
+        if (meta.nullable !== null) nullKnown = true;
+        return {
+          name: decode(a.name == null ? '' : a.name).trim(),
+          type: sized ? sized[1] : type,
+          size: sized ? sized[2] : '',
+          keys: (a.keys || []).filter(Boolean).map(function(k){ return String(k).toUpperCase(); }),
+          nullable: meta.nullable, def: meta.def, ref: meta.ref,
+          desc: [decode(a.comment == null ? '' : a.comment).trim()].concat(meta.more).filter(Boolean).join(' ')
+        };
+      });
+      // The lines under the brace are of two kinds. A list - its items, and the
+      // line that leads into it - belongs with the columns, in the opened
+      // entity. Every other line describes the entity as a whole, which is not
+      // a column: it is shown while the pointer is on the entity, open or not.
+      var lists = [], desc = [];
+      d.notes.forEach(function(line, i){
+        var t = line.trim(), item = t.match(/^[-*]\s+(.*)$/);
+        if (!t) return;
+        if (item) lists.push({ li: true, text: item[1] });
+        else if (d.notes[i + 1] && /^[-*]\s+/.test(d.notes[i + 1].trim())) lists.push({ li: false, text: t });
+        else desc.push(t);
+      });
+      n._desc = desc;
+      return { n: n, details: { notes: lists, rows: rows } };
+    });
+    // A diagram whose comments are all short notes keeps them in its tables.
+    // One that uses them as descriptions shows all of them only when an entity
+    // is opened - not only the long ones, or the tables would show some and
+    // not others.
+    cv.font = fontString(ER_FS);
+    var describes = drafts.some(function(dr){
+      return (dr.n.attributes || []).some(function(a){
+        return a.comment && cv.measureText(decode(a.comment).trim()).width > ER_NOTE_W;
+      });
+    });
+
+    // Once any column says whether it can be null, a column that says nothing
+    // is NOT NULL - which is how a schema document is written. A key never is.
+    drafts.forEach(function(dr){
+      dr.n._describes = describes;
+      var s = dr.details;
+      s.nullKnown = nullKnown;
+      s.rows.forEach(function(r){
+        if (nullKnown && (r.nullable === null || r.keys.indexOf('PK') >= 0)) r.nullable = false;
+      });
+      if (nullKnown || s.notes.length ||
+          s.rows.some(function(r){ return r.desc || r.def || r.ref; })) dr.n._details = s;
+    });
+  }
 
   // Measured once and cached on the node, so the box drawn is the box the
   // layout was given room for - the two must not be allowed to disagree.
   function erModel(n){
     if (n._er) return n._er;
+    if (n._open) return (n._er = erOpened(n));
     var title = measure(n.alias || n.label, ER_TITLE_FS, 340, 600);
     var rows = (n.attributes || []).map(function(a){
       return {
@@ -227,6 +360,7 @@ export const DIAGRAMS_JS = String.raw`
       };
     });
 
+    if (n._describes && n._details) rows.forEach(function(r){ r.comment = ''; });
     cv.font = fontString(ER_FS);
     var wType = 0, wName = 0, wCom = 0;
     rows.forEach(function(r){
@@ -257,10 +391,189 @@ export const DIAGRAMS_JS = String.raw`
 
     n._er = {
       title: title, rows: rows, headH: headH, xType: ER_PAD, xName: xName, xCom: xCom,
-      w: Math.round(Math.max(contentW, title.w + ER_PAD * 2 + 14, 104)),
+      w: Math.round(Math.max(contentW, title.w + ER_PAD * 2 + 14 + (n._details ? ER_MORE * 2 : 0), 104)),
       h: Math.round(headH + (rows.length ? rows.length * ER_ROW_H + 5 : 0))
     };
     return n._er;
+  }
+
+  /* -------------------------------------------------------- opened entity
+     The same entity with everything written about it: a real table of every
+     column - name, type, length, keys and what they reference, null, default,
+     description - with the notes and constraints for the entity above it. It
+     opens in place, in the diagram, and the diagram is laid out again around
+     it. Descriptions and notes wrap, and keep their code spans and bold. */
+
+  var MONO = null;
+  function monoString(px){
+    if (MONO === null) MONO = getComputedStyle(document.documentElement).getPropertyValue('--mono').trim() || 'monospace';
+    return px + 'px ' + MONO;
+  }
+
+  // text with code spans and bold, as words made of styled pieces
+  function richWords(text){
+    var parts = [], re = /\x60([^\x60]+)\x60|\*\*([^*]+)\*\*|([^\x60*]+|[\x60*])/g, m;
+    while ((m = re.exec(text))){
+      if (m[1] != null) parts.push({ s: m[1], k: 'code' });
+      else if (m[2] != null) parts.push({ s: m[2], k: 'bold' });
+      else parts.push({ s: m[3], k: '' });
+    }
+    var words = [[]];
+    parts.forEach(function(p){
+      p.s.split(/(\s+)/).forEach(function(bit){
+        if (!bit) return;
+        if (/^\s+$/.test(bit)){ if (words[words.length - 1].length) words.push([]); return; }
+        words[words.length - 1].push({ s: bit, k: p.k });
+      });
+    });
+    if (!words[words.length - 1].length) words.pop();
+    return words;
+  }
+
+  // Each piece is measured in its own face, so a line of mixed prose and code
+  // breaks where it really runs out of room.
+  function richWrap(text, px, maxw){
+    var words = richWords(decode(text));
+    cv.font = fontString(px);
+    var space = cv.measureText(' ').width, lines = [], cur = [], curW = 0, widest = 0;
+    words.forEach(function(word){
+      var pieces = word.map(function(p){
+        cv.font = p.k === 'code' ? monoString(ER_CODE_FS) : fontString(px, p.k === 'bold' ? 620 : null);
+        return { s: p.s, k: p.k, w: cv.measureText(p.s).width };
+      });
+      var ww = pieces.reduce(function(sum, p){ return sum + p.w; }, 0);
+      if (cur.length && curW + space + ww > maxw){
+        lines.push(cur);
+        widest = Math.max(widest, curW);
+        cur = []; curW = 0;
+      }
+      curW += (cur.length ? space : 0) + ww;
+      cur.push({ pieces: pieces, w: ww });
+    });
+    if (cur.length){ lines.push(cur); widest = Math.max(widest, curW); }
+    var lh = px * 1.42;
+    return { lines: lines, w: Math.ceil(widest), h: Math.ceil(Math.max(1, lines.length) * lh), lh: lh, space: space };
+  }
+
+  // one text per line, each word placed where it was measured to start
+  function richText(parent, m, x, cy, cls){
+    m.lines.forEach(function(line, i){
+      var t = mk('text', { x: x, y: cy + i * m.lh, 'text-anchor': 'start' }, cls);
+      var at = x;
+      line.forEach(function(word, j){
+        if (j) at += m.space;
+        // a word after the first is preceded by its own space, set one space
+        // earlier and in the plain face: the text still reads, and is found by
+        // a search in the page, as words
+        if (j){
+          var gap = mk('tspan', { x: at - m.space });
+          gap.textContent = ' ';
+          t.appendChild(gap);
+        }
+        word.pieces.forEach(function(p, k){
+          var ts = mk('tspan', k || j ? null : { x: at }, p.k ? 'dg-er-x-' + p.k : null);
+          ts.textContent = p.s;
+          t.appendChild(ts);
+          at += p.w;
+        });
+      });
+      parent.appendChild(t);
+    });
+  }
+
+  function erOpened(n){
+    var s = n._details, P = ER_PAD, G = ER_OPEN_GAP;
+    var title = measure(n.alias || n.label, ER_TITLE_FS, 340, 600);
+    var headH = Math.ceil(title.h + ER_HEAD_PAD * 2);
+    var any = function(test){ return s.rows.some(test); };
+
+    // a column of the table appears only when some row has something to put in it
+    var cols = [{ k: 'name', label: 'Column' }, { k: 'type', label: 'Type' }];
+    if (any(function(r){ return r.size; })) cols.push({ k: 'size', label: 'Length' });
+    if (any(function(r){ return r.keys.length || r.ref; })) cols.push({ k: 'key', label: 'Key' });
+    if (s.nullKnown) cols.push({ k: 'null', label: 'Null' });
+    if (any(function(r){ return r.def; })) cols.push({ k: 'def', label: 'Default' });
+    var hasDesc = any(function(r){ return r.desc; });
+    if (hasDesc) cols.push({ k: 'desc', label: 'Description' });
+    cv.font = fontString(ER_LABEL_FS, 620);
+    cols.forEach(function(c){
+      c.label = c.label.toUpperCase();
+      c.w = Math.ceil(cv.measureText(c.label).width + c.label.length * .65);
+    });
+    var col = {};
+    cols.forEach(function(c){ col[c.k] = c; });
+    var widen = function(k, w){ if (col[k]) col[k].w = Math.max(col[k].w, Math.ceil(w)); };
+
+    var rows = s.rows.map(function(r){
+      var row = { r: r };
+      cv.font = fontString(ER_FS, 560); widen('name', cv.measureText(r.name).width);
+      cv.font = fontString(ER_FS); widen('type', cv.measureText(r.type).width);
+      if (r.size) widen('size', cv.measureText(r.size).width);
+      cv.font = fontString(ER_KEY_FS, 600);
+      var kw = 0;
+      row.badges = r.keys.map(function(k){
+        var bw = Math.ceil(cv.measureText(k).width) + ER_BADGE_PAD * 2;
+        kw += bw + (kw ? ER_BADGE_GAP : 0);
+        return { text: k, w: bw, pk: k === 'PK' };
+      });
+      widen('key', kw);
+      if (r.ref){ cv.font = fontString(ER_REF_FS); widen('key', cv.measureText('→ ' + r.ref).width); }
+      if (col.null){
+        cv.font = fontString(ER_KEY_FS, 600);
+        widen('null', r.nullable ? cv.measureText('NULL').width + ER_BADGE_PAD * 2 : cv.measureText('NOT NULL').width);
+      }
+      if (r.def){ cv.font = monoString(ER_CODE_FS); widen('def', cv.measureText(r.def).width); }
+      if (r.desc) widen('desc', Math.min(richWrap(r.desc, ER_FS, 1e6).w, ER_OPEN_DESC_W));
+      return row;
+    });
+
+    var tableW = function(){
+      return P * 2 + cols.reduce(function(sum, c, i){ return sum + c.w + (i ? G : 0); }, 0);
+    };
+    var notes = s.notes.map(function(nt){ return { li: nt.li, text: nt.text }; });
+
+    // The table sets the width; the notes wrap to it, but not narrower than
+    // reads well, and the title and its button always fit. Any width to spare
+    // goes to the descriptions, which then need fewer lines.
+    var w = Math.max(tableW(), notes.length ? ER_OPEN_NOTES_W + P * 2 : 0,
+                     title.w + P * 2 + 14 + ER_MORE * 2, 104);
+    if (hasDesc) col.desc.w += w - tableW();
+    w = Math.max(w, tableW());
+    // Nor, when it can be helped, wider than the page gives the diagram: an
+    // opened entity wider than that would shrink the whole diagram to fit, so
+    // its descriptions wrap narrower first.
+    if (n._room && hasDesc && w > n._room){
+      col.desc.w = Math.max(160, col.desc.w - (w - n._room));
+      w = Math.max(tableW(), notes.length ? Math.min(ER_OPEN_NOTES_W + P * 2, n._room) : 0,
+                   title.w + P * 2 + 14 + ER_MORE * 2, 104);
+    }
+
+    var notesH = 0;
+    notes.forEach(function(nt, i){
+      nt.m = richWrap(nt.text, ER_FS, w - P * 2 - (nt.li ? 14 : 0));
+      nt.gap = i ? (nt.li && notes[i - 1].li ? 3 : 7) : 0;
+      notesH += nt.gap + nt.m.h;
+    });
+    if (notes.length) notesH += 20;
+
+    var x = P;
+    cols.forEach(function(c){ c.x = x; x += c.w + G; });
+    var bodyH = 0;
+    rows.forEach(function(row){
+      var lines = 1;
+      if (col.desc && row.r.desc){
+        row.desc = richWrap(row.r.desc, ER_FS, col.desc.w);
+        lines = Math.max(lines, row.desc.lines.length);
+      }
+      row.h = Math.max(ER_ROW_H + (row.r.ref ? 15 : 0), Math.ceil((lines - 1) * ER_FS * 1.42) + ER_ROW_H + (lines > 1 ? 4 : 0));
+      bodyH += row.h;
+    });
+
+    return {
+      open: true, title: title, headH: headH, notes: notes, notesH: notesH, cols: cols, col: col,
+      rows: rows, w: Math.round(w),
+      h: Math.round(headH + notesH + (rows.length ? ER_OPEN_HEAD_H + bodyH + 5 : 0))
+    };
   }
 
   function nodeSize(n){
@@ -477,6 +790,27 @@ export const DIAGRAMS_JS = String.raw`
     if (st.color) t.style.fill = st.color;
     g.appendChild(t);
 
+    // The button that opens the entity, or closes it again, in the corner of
+    // the header. Which entities are open is remembered by name on the figure,
+    // so it survives the diagram being drawn again.
+    g.setAttribute('data-entity', n.label);
+    if (n._desc && n._desc.length) g.setAttribute('data-desc', JSON.stringify(n._desc));
+    if (n._details){
+      var bx = x + w - 8 - 17, by = y + m.headH/2 - 8.5, cx = bx + 8.5, cy = by + 8.5;
+      var more = mk('g', null, 'dg-er-more' + (m.open ? ' is-open' : ''));
+      var tip = mk('title');
+      tip.textContent = m.open ? 'Back to the compact table' : 'Every column, and the notes';
+      more.appendChild(tip);
+      more.appendChild(mk('rect', { x:bx, y:by, width:17, height:17, rx:5 }, 'dg-er-more-box'));
+      more.appendChild(mk('path', { d: m.open
+        ? 'M'+(cx-4)+','+(cy-.5)+' H'+(cx-.5)+' V'+(cy-4)+' M'+(cx+.5)+','+(cy+4)+' V'+(cy+.5)+' H'+(cx+4)
+        : 'M'+(cx-4)+','+(cy-.5)+' V'+(cy-4)+' H'+(cx-.5)+' M'+(cx+.5)+','+(cy+4)+' H'+(cx+4)+' V'+(cy+.5)
+      }, 'dg-er-more-icon'));
+      g.appendChild(more);
+    }
+
+    if (m.open) return erOpenedEl(g, x, y, w, h, r, m);
+
     m.rows.forEach(function(row, i){
       var top = y + m.headH + i * ER_ROW_H, cy = top + ER_ROW_H/2;
       var rg = mk('g', null, 'dg-er-row');
@@ -509,6 +843,89 @@ export const DIAGRAMS_JS = String.raw`
         bx += b.w + ER_BADGE_GAP;
       });
       g.appendChild(rg);
+    });
+  }
+
+  function erOpenedEl(g, x, y, w, h, r, m){
+    var P = ER_PAD, top = y + m.headH;
+
+    // the notes and constraints, between the header and the table
+    if (m.notes.length){
+      var ng = mk('g', null, 'dg-er-notes');
+      var at = top + 10;
+      m.notes.forEach(function(nt){
+        at += nt.gap;
+        var tx = x + P + (nt.li ? 14 : 0), cy = at + nt.m.lh/2;
+        if (nt.li) ng.appendChild(mk('circle', { cx: x + P + 4, cy: cy, r: 1.8 }, 'dg-er-bullet'));
+        richText(ng, nt.m, tx, cy, 'dg-er-note');
+        at += nt.m.h;
+      });
+      g.appendChild(ng);
+      top += m.notesH;
+      if (m.rows.length) g.appendChild(mk('line', { x1: x, y1: top, x2: x + w, y2: top }, 'dg-er-rule'));
+    }
+    if (!m.rows.length) return;
+
+    // the column headings
+    m.cols.forEach(function(c){
+      var t = mk('text', { x: x + c.x, y: top + ER_OPEN_HEAD_H/2 + 1, 'text-anchor': 'start' }, 'dg-er-x-label');
+      t.textContent = c.label;
+      g.appendChild(t);
+    });
+    top += ER_OPEN_HEAD_H;
+    g.appendChild(mk('line', { x1: x + P, y1: top, x2: x + w - P, y2: top }, 'dg-er-sep'));
+
+    var col = m.col;
+    m.rows.forEach(function(row, i){
+      var r0 = row.r, cy = top + ER_ROW_H/2;
+      var rg = mk('g', null, 'dg-er-row');
+      var last = i === m.rows.length - 1, rr = r - 1, x1 = x + 1, x2 = x + w - 1, y2 = y + h - 1;
+      rg.appendChild(last
+        ? mk('path', { d: 'M'+x1+','+top+' H'+x2+' V'+(y2-rr)+' A'+rr+','+rr+' 0 0 1 '+(x2-rr)+','+y2+
+                          ' H'+(x1+rr)+' A'+rr+','+rr+' 0 0 1 '+x1+','+(y2-rr)+' Z' }, 'dg-er-band')
+        : mk('rect', { x: x1, y: top, width: w - 2, height: row.h }, 'dg-er-band'));
+      if (i) rg.appendChild(mk('line', { x1: x + P, y1: top, x2: x + w - P, y2: top }, 'dg-er-sep'));
+
+      var put = function(c, text, cls, dy){
+        if (!c) return;
+        var e = mk('text', { x: x + c.x, y: cy + (dy || 0), 'text-anchor': 'start' }, cls);
+        e.textContent = text;
+        rg.appendChild(e);
+      };
+      var none = function(c){ put(c, '—', 'dg-er-none'); };
+      put(col.name, r0.name, 'dg-er-name dg-er-x-name');
+      put(col.type, r0.type, 'dg-er-type');
+      if (r0.size) put(col.size, r0.size, 'dg-er-type'); else none(col.size);
+
+      if (col.key){
+        var bx = x + col.key.x;
+        row.badges.forEach(function(b){
+          rg.appendChild(mk('rect', { x: bx, y: cy - ER_BADGE_H/2, width: b.w, height: ER_BADGE_H, rx: 4 },
+            'dg-er-badge' + (b.pk ? ' is-pk' : '')));
+          var bt = mk('text', { x: bx + b.w/2, y: cy, 'text-anchor': 'middle' }, 'dg-er-key');
+          bt.textContent = b.text;
+          rg.appendChild(bt);
+          bx += b.w + ER_BADGE_GAP;
+        });
+        if (r0.ref) put(col.key, '→ ' + r0.ref, 'dg-er-ref', row.badges.length ? 15 : 0);
+      }
+
+      if (col.null){
+        if (r0.nullable){
+          cv.font = fontString(ER_KEY_FS, 600);
+          var nw = Math.ceil(cv.measureText('NULL').width) + ER_BADGE_PAD * 2;
+          rg.appendChild(mk('rect', { x: x + col.null.x, y: cy - ER_BADGE_H/2, width: nw, height: ER_BADGE_H, rx: 4 }, 'dg-er-null'));
+          var nt = mk('text', { x: x + col.null.x + nw/2, y: cy, 'text-anchor': 'middle' }, 'dg-er-null-text');
+          nt.textContent = 'NULL';
+          rg.appendChild(nt);
+        } else put(col.null, 'NOT NULL', 'dg-er-notnull');
+      }
+      if (r0.def) put(col.def, r0.def, 'dg-er-def'); else none(col.def);
+      if (row.desc) richText(rg, row.desc, x + col.desc.x, cy, 'dg-er-desc');
+      else if (col.desc) none(col.desc);
+
+      g.appendChild(rg);
+      top += row.h;
     });
   }
 
@@ -1507,18 +1924,42 @@ export const DIAGRAMS_JS = String.raw`
       // why one layout and one drawing pass serve both; only the sizes, the
       // end marks and the box itself differ.
       data.__er = kind === 'er';
+      if (data.__er){
+        attachDetails(data, code);
+        var open = fig._open || {};
+        // the width an opened entity can take without widening the diagram past the page
+        var room = fig.querySelector('.diagram-out').clientWidth;
+        room = room ? room - Number(SPACING.er.pad) * 2 - 4 : 0;
+        data.nodes.forEach(function(n){
+          n._open = !!(n._details && open[n.label]);
+          n._room = room;
+        });
+      }
       var raw = (db.getDirection && db.getDirection()) || 'TB';
-      return elk.layout(buildGraph(data, DIRS[String(raw).toUpperCase()] || 'DOWN')).then(function(res){
+      var dir = DIRS[String(raw).toUpperCase()] || 'DOWN';
+      var avail = fig.querySelector('.diagram-out').clientWidth;
+      var layout = function(){ return elk.layout(buildGraph(data, dir)); };
+      return layout().then(function(res){
+        // Relationships routed around an opened entity add width the entity
+        // alone did not have. If that takes the diagram past the page, the
+        // entity's descriptions give that width back and it is laid out once more.
+        var over = Math.ceil(res.width) - avail;
+        if (!data.__er || !avail || over <= 2 || !data.nodes.some(function(n){ return n._open; })) return res;
+        data.nodes.forEach(function(n){ n._room = Math.max(0, n._room - over); n._er = null; });
+        return layout();
+      }).then(function(res){
         var out = fig.querySelector('.diagram-out');
         out.textContent = '';
         out.appendChild(drawSvg(res, data));
         var note = fig.querySelector('.diagram-note');
         // An ER chart turns dense sooner: entities are big, so fewer of them
         // fill the frame and the relationships start crossing earlier.
-        if ((data.edges || []).length >= (data.__er ? 4 : 6)){
+        var openable = data.__er && data.nodes.some(function(n){ return n._details; });
+        if ((data.edges || []).length >= (data.__er ? 4 : 6) || openable){
           if (!note){ note = el('div','diagram-note'); fig.appendChild(note); }
           note.textContent = data.__er
-            ? 'Hover a relationship or an entity to isolate it · click to pin · Esc to release'
+            ? 'Hover a relationship or an entity to isolate it · click to pin · Esc to release' +
+              (openable ? ' · the button in an entity’s corner opens it to every column' : '')
             : 'Hover an arrow or a box to isolate it · click to pin · Esc to release';
         } else if (note) note.remove();
       });
@@ -1654,6 +2095,8 @@ export const DIAGRAMS_JS = String.raw`
 
   document.addEventListener('mousemove', function(e){
     var hit = targetOf(e);
+    var entity = hit && hit.kind === 'node' && e.target.closest('.dg-node[data-desc]');
+    if (entity) showTip(entity); else hideTip();
     if (!hit){
       if (!pinned) [].slice.call(document.querySelectorAll('svg.dg.has-hot')).forEach(clear);
       return;
@@ -1665,6 +2108,8 @@ export const DIAGRAMS_JS = String.raw`
 
   document.addEventListener('click', function(e){
     if (e.target.closest && e.target.closest('.diagram-btn')) return;
+    var more = e.target.closest && e.target.closest('.dg-er-more');
+    if (more){ toggleEntity(more); return; }
     var hit = targetOf(e);
     if (!hit || !hit.kind){
       if (pinned){ clear(pinned.svg); pinned = null; }
@@ -1682,6 +2127,126 @@ export const DIAGRAMS_JS = String.raw`
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && pinned){ clear(pinned.svg); pinned = null; }
   });
+
+  /* ------------------------------------------------- opening an entity
+     An entity opens where it stands. Its size changes, so the diagram is laid
+     out again - and so nothing jumps under the reader: the entity keeps its
+     place on the screen, every other entity glides from where it was to where
+     it now is, and the relationships, whose routes have changed, fade in once
+     they are drawn. In the full-size view the same happens to the copy there. */
+
+  function toggleEntity(more){
+    var node = more.closest('.dg-node'), svg = more.closest('svg.dg');
+    if (!node || !svg) return;
+    var inBox = !!svg.closest('.lightbox');
+    var source = inBox ? svg._source : svg;
+    var fig = source && source.closest('.diagram');
+    if (!fig) return;
+
+    var key = node.getAttribute('data-entity');
+    var open = fig._open = fig._open || {};
+    if (open[key]) delete open[key]; else open[key] = true;
+
+    var was = {};
+    [].slice.call(svg.querySelectorAll('.dg-node[data-entity]')).forEach(function(n){
+      was[n.getAttribute('data-entity')] = n.getBoundingClientRect();
+    });
+    if (pinned){ clear(pinned.svg); pinned = null; }
+
+    fig.dataset.drawn = '';
+    draw(fig, 'clean').then(function(){
+      var shown = fig.querySelector('.diagram-out > svg.dg');
+      if (!shown) return;
+      if (inBox && window.__lightbox && window.__lightbox.swap) shown = window.__lightbox.swap(shown) || shown;
+      var anchor = shown.querySelector('.dg-node[data-entity="' + sel(key) + '"]');
+      if (anchor && was[key]){
+        var now = anchor.getBoundingClientRect();
+        if (inBox) window.__lightbox.nudge(was[key].left - now.left, was[key].top - now.top);
+        else window.scrollBy(0, now.top - was[key].top);
+      }
+      glide(shown, was, key);
+    });
+  }
+
+  function glide(svg, was, key){
+    var vb = svg.viewBox && svg.viewBox.baseVal, box = svg.getBoundingClientRect();
+    if (!vb || !vb.width || !box.width) return;
+    var k = box.width / vb.width, moving = [];
+    [].slice.call(svg.querySelectorAll('.dg-node[data-entity]')).forEach(function(n){
+      var id = n.getAttribute('data-entity');
+      if (id === key){ n.classList.add('dg-er-opening'); return; }
+      if (!was[id]) return;
+      var now = n.getBoundingClientRect();
+      // screen pixels back into the diagram's own units, which a transform on an svg element is in
+      var dx = (was[id].left - now.left) / k, dy = (was[id].top - now.top) / k;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      n.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+      moving.push(n);
+    });
+    svg.classList.add('dg-reflow');
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){
+        moving.forEach(function(n){
+          n.style.transition = 'transform .32s cubic-bezier(.2,.7,.2,1)';
+          n.style.transform = '';
+        });
+      });
+    });
+    // and whatever happened to the frames in between, everything ends where the layout put it
+    setTimeout(function(){
+      svg.classList.remove('dg-reflow');
+      moving.forEach(function(n){ n.style.transition = ''; n.style.transform = ''; });
+      [].slice.call(svg.querySelectorAll('.dg-er-opening')).forEach(function(n){ n.classList.remove('dg-er-opening'); });
+    }, 700);
+  }
+
+  /* ------------------------------------------------ what an entity is for
+     What is written about an entity as a whole is not one of its columns, so
+     it is not in its table: it appears beside the entity while the pointer is
+     on it, open or not - above it when there is room, below its header when
+     not - and goes when the pointer leaves, the page scrolls or a click lands. */
+
+  var tip = null, tipFor = null, tipTimer = 0;
+
+  function escHtml(s){
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  // code spans and bold, the two such a description actually uses
+  function inlineMd(s){
+    return escHtml(s).replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  }
+
+  function showTip(node){
+    if (tipFor === node) return;
+    hideTip();
+    tipFor = node;
+    tipTimer = setTimeout(function(){
+      if (tipFor !== node || !node.isConnected) return;
+      var lines;
+      try { lines = JSON.parse(node.getAttribute('data-desc')); } catch (err) { return; }
+      tip = el('div', 'dg-tip');
+      tip.innerHTML = lines.map(function(l){ return '<p>' + inlineMd(l) + '</p>'; }).join('');
+      document.body.appendChild(tip);
+      var box = (node.querySelector('.dg-node-shape') || node).getBoundingClientRect();
+      var head = node.querySelector('.dg-er-rule');
+      var vw = document.documentElement.clientWidth, w = tip.offsetWidth, h = tip.offsetHeight;
+      var top = box.top - h - 8;
+      if (top < 8) top = (head ? head.getBoundingClientRect().bottom : box.top + 34) + 8;
+      tip.style.left = Math.round(Math.min(Math.max(8, box.left), vw - w - 8)) + 'px';
+      tip.style.top = Math.round(top) + 'px';
+    }, 160);
+  }
+
+  function hideTip(){
+    clearTimeout(tipTimer);
+    tipFor = null;
+    if (tip){ tip.remove(); tip = null; }
+  }
+  addEventListener('scroll', hideTip, { passive: true });
+  document.addEventListener('wheel', hideTip, { passive: true });
+  document.addEventListener('mousedown', hideTip, true);
 
   /* ----------------------------------------------------------- the toolbar */
 
