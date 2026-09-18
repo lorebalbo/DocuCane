@@ -296,6 +296,17 @@ export const CSS_DIAGRAM = `
 .diagram:has(svg):hover{border-color:#c3c9d4}
 .diagram .fail{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:left;white-space:pre-wrap}
 .diagram-note{margin-top:10px;font-size:11px;color:var(--faint);text-align:center}
+/* A collapsed diagram is its frame and nothing else: a plain white box the
+   height of a line, which a click opens again. */
+.diagram.is-folded{display:flex;align-items:center;justify-content:center;height:44px;padding:0 18px;
+  overflow:hidden;cursor:pointer}
+.diagram.is-folded::before{content:'Diagram collapsed · click to show';font-size:11.5px;color:var(--faint)}
+.diagram.is-folded:hover{border-color:#c3c9d4}
+.diagram.is-folded:hover::before{color:var(--muted)}
+.diagram.is-folded .diagram-out,.diagram.is-folded .diagram-note,
+.diagram.is-folded .diagram-btn:not([data-act=fold]){display:none}
+.diagram.is-folded .diagram-bar{top:50%;transform:translateY(-50%)}
+@media print{.diagram.is-folded{display:none}}
 
 /* A wide diagram is allowed to spill a little past the text column - the point
    of the column is to keep prose readable, and a diagram is not prose. */

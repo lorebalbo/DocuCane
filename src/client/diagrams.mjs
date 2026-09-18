@@ -2048,8 +2048,44 @@ export const DIAGRAMS_JS = String.raw`
       ? (used === 'clean' ? 'Mermaid layout' : 'Clean layout') : '';
   }
 
+  /* ------------------------------------------------------------- folding
+     Any diagram can be collapsed to an empty frame, out of the reader's way.
+     The page remembers it per document and per place in it, in the reader's
+     browser, so it stays collapsed on the next visit and through an edit to
+     its source. A collapsed diagram is not drawn: it is drawn when it opens,
+     at the width it then has. */
+
+  function foldKey(fig){
+    var main = document.getElementById('main');
+    var figs = main ? [].slice.call(main.querySelectorAll('[data-diagram]')) : [];
+    var i = figs.indexOf(fig);
+    if (i < 0) return null;
+    var docId = decodeURIComponent((location.hash.match(/^#\/([^\/]+)/) || [])[1] || '');
+    return (CFG.ns || 'docucane') + ':fold:' + docId + ':' + i;
+  }
+  function folded(fig){
+    var k = foldKey(fig);
+    try { return !!(k && localStorage.getItem(k)); } catch (e) { return false; }
+  }
+  function setFold(fig, on){
+    var k = foldKey(fig);
+    try { if (k){ if (on) localStorage.setItem(k, '1'); else localStorage.removeItem(k); } } catch (e) {}
+    paintFold(fig, on);
+    if (!on) draw(fig);
+  }
+  function paintFold(fig, on){
+    fig.classList.toggle('is-folded', on);
+    var btn = fig.querySelector('[data-act="fold"]');
+    if (btn){
+      btn.textContent = on ? 'Show' : 'Collapse';
+      btn.title = on ? 'Show the diagram' : 'Fold the diagram away';
+    }
+  }
+
   function draw(fig, force){
     var code = fig.querySelector('.diagram-src').textContent;
+    if (!fig._foldSeen){ fig._foldSeen = true; paintFold(fig, folded(fig)); }
+    if (fig.classList.contains('is-folded')) return Promise.resolve();
     var want = force || engineFor(fig, code);
     if (fig.dataset.drawn === want) return Promise.resolve();
     fig.dataset.drawn = want;
@@ -2336,10 +2372,19 @@ export const DIAGRAMS_JS = String.raw`
 
   document.addEventListener('click', function(e){
     var btn = e.target.closest && e.target.closest('.diagram-btn');
+    var shut = e.target.closest && e.target.closest('.diagram.is-folded');
+    // anywhere on a collapsed diagram opens it
+    if (shut && (!btn || btn.dataset.act === 'fold')){ e.stopPropagation(); setFold(shut, false); return; }
     if (!btn) return;
     var fig = btn.closest('.diagram');
     if (!fig) return;
     e.stopPropagation();
+    if (btn.dataset.act === 'fold'){
+      if (pinned){ clear(pinned.svg); pinned = null; }
+      hideTip();
+      setFold(fig, true);
+      return;
+    }
     if (btn.dataset.act === 'engine'){
       var next = fig.dataset.drawn === 'clean' ? 'mermaid' : 'clean';
       fig.dataset.engine = next;
