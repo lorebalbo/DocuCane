@@ -19,6 +19,7 @@ html{-webkit-text-size-adjust:100%}
      either side of it. The column is centred in the main area. */
   --measure:92ch; --gutter:46px;
   --column:calc(var(--measure) + var(--gutter) * 2);
+  --margin:var(--gutter);
   /* diagrams */
   --dg-node:#fff; --dg-node-line:#c3c9d4; --dg-edge:#8a91a0; --dg-edge-text:#5f6674;
   --dg-group:#f7f8fa; --dg-group-line:#dfe3ea; --dg-hot:#1b56d6; --dg-hot-soft:#eaf0fd;
@@ -31,6 +32,11 @@ html{-webkit-text-size-adjust:100%}
   /* sequences: notes are the one warm surface, so an aside never reads as a message */
   --dg-seq-num:#5f6674; --dg-seq-note:#fbf8ee; --dg-seq-note-line:#e7dfc4; --dg-seq-note-ink:#4f4a3a;
 }
+/* A project that fixes its margins (layout.margin) gives the column whatever
+   the reading area leaves once they are taken: --margin runs from the edge of
+   the area to the text, so the column's own gutter is inside it. Never wider
+   than the area, never so narrow the text stops reading as a column. */
+:root.fixed-margin{--column:clamp(360px,calc(100% - var(--margin) * 2 + var(--gutter) * 2),100%)}
 body{margin:0;background:var(--bg);color:var(--ink);
   font:15px/1.7 var(--font);
   font-optical-sizing:auto;
@@ -245,6 +251,7 @@ mark{background:#dfe3ea;color:var(--ink);border-radius:3px;padding:0 2px}
   .layout{grid-template-columns:var(--rail)}
   .layout:not(.collapsed) .main{display:none}
   :root{--gutter:20px}
+  :root.fixed-margin{--column:100%}
   .docnav{grid-template-columns:1fr}
   .docnav-btn.next{grid-column:1;text-align:left}
 }

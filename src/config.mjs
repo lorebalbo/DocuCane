@@ -11,6 +11,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// the range layout.margin can take, and the page's slider with it
+export const MARGIN_MIN = 20, MARGIN_MAX = 480;
+
 export const CONFIG_NAMES = ['docs.config.json', '.docucane.json'];
 
 const DEFAULTS = {
@@ -49,6 +52,13 @@ const DEFAULTS = {
     // Cap on how wide a node's text runs before it wraps, in pixels.
     nodeTextWidth: 210,
     edgeTextWidth: 200,
+  },
+  layout: {
+    // The room either side of the text, from the edge of the reading area to
+    // where the text starts, in pixels. null keeps the column at its reading
+    // width and centres it, so the room either side is whatever is left over.
+    // Set from the page itself too: the settings button in the sidebar.
+    margin: null,
   },
   // Reader features. Turn off what a given project does not want.
   comments: true,
@@ -123,6 +133,11 @@ export function loadConfig({ root, docs, out, title, configPath, engine }) {
   // opened from file:// can otherwise land in the same storage bucket.
   cfg.ns = 'docucane:' + cfg.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
+  const margin = cfg.layout && cfg.layout.margin;
+  if (margin != null && !(Number.isFinite(margin) && margin >= MARGIN_MIN && margin <= MARGIN_MAX)) {
+    throw new Error('layout.margin must be null or a number of pixels from ' + MARGIN_MIN + ' to ' +
+      MARGIN_MAX + ', got: ' + JSON.stringify(margin));
+  }
   if (!['clean', 'mermaid'].includes(cfg.diagrams.engine)) {
     throw new Error("diagrams.engine must be 'clean' or 'mermaid', got: " + cfg.diagrams.engine);
   }

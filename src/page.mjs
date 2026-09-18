@@ -19,7 +19,11 @@ export function renderPage({ cfg, docs, fontCss, mermaidTag, elkTag, stamp }) {
     nodeTextWidth: cfg.diagrams.nodeTextWidth,
     edgeTextWidth: cfg.diagrams.edgeTextWidth,
     comments: cfg.comments !== false,
+    margin: cfg.layout.margin,
   };
+  // fixed margins are set on the root, so the page is laid out right from its first paint
+  const rootAttrs = cfg.layout.margin == null ? ''
+    : ' class="fixed-margin" style="--margin:' + Number(cfg.layout.margin) + 'px"';
 
   const data = JSON.stringify({ docs }).replace(/</g, '\\u003c');
   const count = countLine(docs, stamp);
@@ -47,7 +51,7 @@ export function renderPage({ cfg, docs, fontCss, mermaidTag, elkTag, stamp }) {
 <div class="cmt-toast" id="cmt-toast" hidden></div>`;
 
   return `<!doctype html>
-<html lang="en">
+<html lang="en"${rootAttrs}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
