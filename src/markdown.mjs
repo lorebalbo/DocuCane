@@ -58,6 +58,223 @@ export const plain = (s) => s
   .replace(/(^|[^\w\\])_+(?!\s)([^_\n]+?)(?<!\s)_+(?!\w)/g, '$1$2')  // _emphasis_, never user_private
   .trim();
 
+/* ------------------------------------------------------------ http calls */
+
+// The verbs an API call is made with. Each has its own colour, in the call
+// blocks and wherever a code span names one in the prose.
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+const METHOD_RE = new RegExp('^(' + METHODS.join('|') + ')(?:\\s+(\\S.*))?$');
+
+// A url with its {placeholders} set apart from the fixed text around them.
+const urlHtml = (url) => esc(url).replace(/\{[^}\s]+\}/g, (v) => '<span class="c-var">' + v + '</span>');
+
+// A code span. One that is a verb, or a verb and a url, reads as a call.
+function codeSpan(code) {
+  const m = code.match(METHOD_RE);
+  if (!m) return '<code>' + urlHtml(code) + '</code>';
+  const verb = '<span class="c-verb m-' + m[1].toLowerCase() + '">' + m[1] + '</span>';
+  return m[2]
+    ? '<code class="c-call">' + verb + ' ' + urlHtml(m[2]) + '</code>'
+    : '<code class="c-verb-only m-' + m[1].toLowerCase() + '">' + m[1] + '</code>';
+}
+
+// JSON, coloured by what each token is: keys, strings, numbers, the three
+// literals, and the punctuation faded back so the values carry the eye.
+const JSON_RE = /("(?:\\.|[^"\\\n])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([{}[\],:])/g;
+function jsonHtml(code) {
+  let out = '', pos = 0, m;
+  JSON_RE.lastIndex = 0;
+  while ((m = JSON_RE.exec(code))) {
+    out += esc(code.slice(pos, m.index));
+    if (m[1]) out += '<span class="j-' + (m[2] ? 'key' : 'str') + '">' + esc(m[1]) + '</span>' +
+      (m[2] ? '<span class="j-pun">' + esc(m[2]) + '</span>' : '');
+    else if (m[3]) out += '<span class="j-lit">' + m[3] + '</span>';
+    else if (m[4]) out += '<span class="j-num">' + m[4] + '</span>';
+    else out += '<span class="j-pun">' + esc(m[5]) + '</span>';
+    pos = m.index + m[0].length;
+  }
+  return out + esc(code.slice(pos));
+}
+const looksJson = (code) => /^\s*[{[]/.test(code);
+
+// SQL, coloured the way an editor would: keywords, data types, function
+// calls, strings, numbers and comments, with @variables and [bracketed] or
+// "quoted" names kept whole. It knows the words, not the grammar - enough
+// for a statement in a document, across the T-SQL, Postgres and ANSI flavours.
+const SQL_KEYWORDS = new Set(('select from where and or not in is null as on join inner left right full outer cross ' +
+  'apply group by order having distinct top limit offset fetch next rows only union all except intersect ' +
+  'insert into values update set delete merge using matched then output inserted deleted returning ' +
+  'create alter drop table view index unique clustered nonclustered include primary key foreign references ' +
+  'constraint default check identity schema procedure proc function trigger returns return begin end ' +
+  'declare if else while case when exists between like with nolock rowlock updlock holdlock readpast ' +
+  'transaction tran commit rollback save go exec execute asc desc over partition cascade to grant revoke ' +
+  'truncate for of nocount xact_abort try catch throw raiserror print sequence temporary temp').split(' '));
+const SQL_TYPES = new Set(('int bigint smallint tinyint bit decimal numeric money float real char varchar nchar ' +
+  'nvarchar text ntext date time datetime datetime2 datetimeoffset smalldatetime uniqueidentifier binary ' +
+  'varbinary xml json boolean bool serial bigserial integer timestamp timestamptz interval uuid jsonb max').split(' '));
+const SQL_RE = /(--[^\n]*|\/\*[\s\S]*?\*\/)|(N?'(?:''|[^'])*')|("[^"\n]*"|\[[^\]\n]*\])|(@@?\w+)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w$#]*)(?=(\()?)|(<>|!=|<=|>=|[=<>+\-*/%,;()])/g;
+function sqlHtml(code) {
+  let out = '', pos = 0, m;
+  SQL_RE.lastIndex = 0;
+  const span = (cls, text) => '<span class="s-' + cls + '">' + esc(text) + '</span>';
+  while ((m = SQL_RE.exec(code))) {
+    out += esc(code.slice(pos, m.index));
+    const w = m[6] && m[6].toLowerCase();
+    out += m[1] ? span('com', m[1])
+      : m[2] ? span('str', m[2])
+      : m[3] ? span('id', m[3])
+      : m[4] ? span('var', m[4])
+      : m[5] ? span('num', m[5])
+      : m[6] ? (SQL_KEYWORDS.has(w) ? span('kw', m[6]) : SQL_TYPES.has(w) ? span('type', m[6])
+        : m[7] ? span('fn', m[6]) : esc(m[6]))
+      : span('pun', m[8]);
+    pos = m.index + m[0].length;
+  }
+  return out + esc(code.slice(pos));
+}
+const SQL_LANGS = new Set(['sql', 'tsql', 'mssql', 'postgres', 'postgresql', 'pgsql', 'mysql', 'plsql', 'sqlite']);
+
+// A status code's colour: the verbs' palette, reused by what the code means.
+const statusTone = (n) => (n < 300 ? 'post' : n < 400 ? 'get' : n < 500 ? 'put' : 'delete');
+
+// A fenced http block, drawn as the exchange it shows. Each message - the
+// request, and any response written after it, starting at its status line -
+// gets a header like an ```api block's (the verb and the url, or the status
+// and its reason), then its HTTP headers as a list of names and values, then
+// its body, coloured when it is JSON. A block of responses alone works too.
+// Anything that does not start with a request or a status line stays an
+// ordinary code block.
+const REQUEST_RE = /^([A-Z]+)\s+(\S+)(?:\s+HTTP\/[\d.]+)?$/;
+const STATUS_RE = /^HTTP\/[\d.]+\s+(\d{3})\s*(.*)$/;
+function httpBlock(code) {
+  const lines = code.replace(/^\s*\n/, '').replace(/\s+$/, '').split('\n');
+  const first = (lines[0] || '').trim();
+  const req = first.match(REQUEST_RE);
+  if (!(req && METHODS.includes(req[1])) && !STATUS_RE.test(first)) return null;
+
+  // a status line after a blank one starts the next message
+  const messages = [];
+  let cur = [];
+  lines.forEach((line, n) => {
+    if (n > 0 && STATUS_RE.test(line.trim()) && !lines[n - 1].trim()) { messages.push(cur); cur = []; }
+    cur.push(line);
+  });
+  messages.push(cur);
+  return '<div class="http">' + messages.map(httpMessage).join('') + '</div>';
+}
+
+function httpMessage(lines) {
+  const first = lines[0].trim();
+  const req = first.match(REQUEST_RE);
+  const res = !req && first.match(STATUS_RE);
+
+  let i = 1;
+  const headers = [];
+  for (; i < lines.length && lines[i].trim(); i++) {
+    const h = lines[i].match(/^\s*([\w-]+)\s*:\s*(.*)$/);
+    if (!h) break;
+    headers.push(h);
+  }
+  const body = lines.slice(i).join('\n').replace(/^\s*\n/, '').replace(/\s+$/, '');
+
+  const tone = req ? req[1].toLowerCase() : statusTone(+res[1]);
+  const badge = req ? esc(req[1]) : res[1];
+  const what = req
+    ? '<code class="api-url">' + urlHtml(req[2]).replace(/^(https?:\/\/)/, '<span class="api-scheme">$1</span>') + '</code>'
+    : '<span class="http-reason">' + esc(res[2]) + '</span>';
+  return '<div class="http-msg ' + (req ? 'is-req' : 'is-res') + ' m-' + tone + '">' +
+    '<div class="http-head"><span class="api-verb">' + badge + '</span>' + what +
+      '<span class="http-kind">' + (req ? 'Request' : 'Response') + '</span></div>' +
+    (headers.length ? '<dl class="http-headers">' + headers.map((h) =>
+      '<div><dt>' + esc(h[1]) + '</dt><dd>' + esc(h[2]) + '</dd></div>').join('') + '</dl>' : '') +
+    (body ? '<pre class="http-body"><code>' + (looksJson(body) ? jsonHtml(body) : esc(body)) + '</code></pre>' : '') +
+  '</div>';
+}
+
+// An ```api block: one call, as a box whose header - verb and url - is always
+// there, and whose body, folded away until asked for, says what each part of
+// the url is. The source is the request line, then one `part: description`
+// per part, where the part is a {placeholder} or a fixed piece of the path;
+// lines indented under a part carry on its description, and a `- ` line
+// among them is a bullet (what the value may be, what it may not).
+//
+//   PUT https://{host}/api/v1/submissions/{submissionId}
+//
+//   {host}: domain exposed by the gateway
+//   {submissionId}: the submission opened earlier
+//     - a positive integer
+//     - never reused
+function apiBlock(code, ctx) {
+  const lines = code.split('\n');
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  const req = (lines[i] || '').trim().match(/^([A-Za-z]+)\s+(\S+)\s*(.*)$/);
+  if (!req) return null;
+  const method = req[1].toUpperCase();
+  const url = req[2];
+  const title = req[3].replace(/^[-·—:]\s*/, '');
+
+  const parts = [];
+  for (i++; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const def = !/^\s/.test(line) && line.match(/^`?([^`\s][^`]*?)`?\s*:\s+(.*)$/);
+    if (def) { parts.push({ key: def[1].trim(), text: [def[2]] }); continue; }
+    if (parts.length) parts[parts.length - 1].text.push(line.trim());
+  }
+
+  // Where each part sits in the url: a placeholder anywhere, a fixed piece
+  // only between separators, so `close` never lights up inside `closed`.
+  const spans = [];
+  parts.forEach((p, n) => {
+    let from = 0, at;
+    while ((at = url.indexOf(p.key, from)) !== -1) {
+      const end = at + p.key.length;
+      const edge = p.key.startsWith('{') ||
+        ((at === 0 || /[/.:?&=]/.test(url[at - 1])) && (end === url.length || /[/.?&=#]/.test(url[end])));
+      if (edge && !spans.some((s) => at < s.end && end > s.at)) { spans.push({ at, end, n }); break; }
+      from = at + 1;
+    }
+  });
+  spans.sort((a, b) => a.at - b.at);
+  let urlOut = '', pos = 0;
+  for (const s of spans) {
+    urlOut += urlHtml(url.slice(pos, s.at)) +
+      '<span class="api-part" data-part="' + s.n + '">' + urlHtml(url.slice(s.at, s.end)) + '</span>';
+    pos = s.end;
+  }
+  urlOut += urlHtml(url.slice(pos));
+  urlOut = urlOut.replace(/^(https?:\/\/)/, '<span class="api-scheme">$1</span>');
+
+  const desc = (text) => {
+    const prose = [], bullets = [];
+    for (const t of text) {
+      if (/^[-*]\s+/.test(t)) bullets.push(t.replace(/^[-*]\s+/, ''));
+      else if (bullets.length) bullets[bullets.length - 1] += ' ' + t;
+      else prose.push(t);
+    }
+    return (prose.length ? '<p>' + inline(prose.join(' '), ctx) + '</p>' : '') +
+      (bullets.length ? '<ul>' + bullets.map((b) => '<li>' + inline(b, ctx) + '</li>').join('') + '</ul>' : '');
+  };
+  const rows = parts.map((p, n) =>
+    '<div class="api-row" data-part="' + n + '">' +
+      '<dt><code>' + urlHtml(p.key) + '</code></dt>' +
+      '<dd>' + desc(p.text) + '</dd></div>').join('');
+
+  const chev = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    'stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>';
+  const open = parts.length > 0;
+  return '<div class="api m-' + method.toLowerCase() + '" data-api>' +
+    '<div class="api-head"' + (open ? ' role="button" tabindex="0" aria-expanded="false"' : '') + '>' +
+      '<span class="api-verb">' + esc(method) + '</span>' +
+      '<code class="api-url">' + urlOut + '</code>' +
+      (title ? '<span class="api-title">' + inline(title, ctx) + '</span>' : '') +
+      (open ? '<span class="api-tog" aria-hidden="true">' + chev + '</span>' : '') +
+    '</div>' +
+    (open ? '<dl class="api-body">' + rows + '</dl>' : '') +
+  '</div>';
+}
+
 /* ------------------------------------------------------- inline markdown */
 
 export function inline(src, ctx) {
@@ -65,7 +282,7 @@ export function inline(src, ctx) {
   const put = (html) => SPAN_OPEN + (stash.push(html) - 1) + SPAN_CLOSE;
 
   // 1. code spans first - nothing inside them is markdown
-  let s = src.replace(/(`+)([\s\S]*?)\1/g, (_, _t, code) => put('<code>' + esc(code.trim()) + '</code>'));
+  let s = src.replace(/(`+)([\s\S]*?)\1/g, (_, _t, code) => put(codeSpan(code.trim())));
 
   // 2. the only raw HTML documents are expected to use: link targets and hard breaks
   s = s.replace(/<a id="([\w.-]+)"><\/a>/g, (_, id) => put('<a id="' + id + '"></a>'));
@@ -282,8 +499,10 @@ export function parkFences(md, ctx) {
       body.push(lines[i]); i++;
     }
     const code = body.join('\n');
+    const api = lang === 'api' ? apiBlock(code, ctx) : lang === 'http' ? httpBlock(code) : null;
     const n = ctx.blocks.push(
-      lang === 'mermaid'
+      api ? api
+      : lang === 'mermaid'
         ? '<figure class="diagram" data-diagram><pre class="diagram-src">' + esc(code) + '</pre>' +
           '<div class="diagram-head">' + diagramName(code) +
             '<div class="diagram-bar">' +
@@ -294,7 +513,8 @@ export function parkFences(md, ctx) {
           '</div>' +
           '<div class="diagram-out"></div></figure>'
         : '<div class="code-wrap">' + (lang ? '<span class="code-lang">' + esc(lang) + '</span>' : '') +
-          '<pre class="code"><code>' + esc(code) + '</code></pre></div>'
+          '<pre class="code"><code>' + (lang === 'json' || (lang === 'http' && looksJson(code)) ? jsonHtml(code)
+            : SQL_LANGS.has(lang) ? sqlHtml(code) : esc(code)) + '</code></pre></div>'
     ) - 1;
     out.push('@@block7f3a:' + n + '@@');
   }

@@ -6,7 +6,10 @@ html{-webkit-text-size-adjust:100%}
 :root{
   --bg:#e9ebef; --ink:#141a26; --muted:#5f6674; --faint:#98a0ad; --line:#d7dbe2;
   --surface:#fff; --surface-2:#f2f3f6; --hover:rgba(255,255,255,.62);
-  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --mono:ui-monospace,"JetBrains Mono","Cascadia Mono",SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  /* inline code */
+  --code-bg:rgba(255,255,255,.66); --code-bg-on-white:#f5f6f9; --code-bg-table:#f1f3f8; --code-ring:rgba(20,26,38,.1);
+  --code-ink:#3a3d78; --code-var:#7a5a1e;
   /* Inter is vendored into the page as a variable font; everything after it is
      the offline fallback. Swap this one line to re-face the whole dashboard. */
   --font:Inter,"Avenir Next","Segoe UI",system-ui,-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;
@@ -213,15 +216,33 @@ h4.sec-head,h5.sec-head,h6.sec-head{margin:0 0 8px;font-size:14px;font-weight:va
 .doc a:not(.h-anchor):hover{border-bottom-color:var(--ink);background:rgba(255,255,255,.55)}
 .doc hr{margin:32px 0;border:0;border-top:1px solid var(--line)}
 .doc blockquote{margin:0 0 18px;padding:2px 0 2px 17px;border-left:2px solid #c3c9d4;color:var(--muted)}
-/* Inline code is a wash laid inside the sentence, not a bordered chip dropped
-   into it: no outline, a tint of the ink instead of a white plate, and padding
-   in em so the box tracks the text it sits in - including inside a heading or
-   a white table cell, where a white plate would have vanished. */
-.doc code{font-family:var(--mono);font-size:.855em;letter-spacing:-.008em;
-  background:rgba(20,26,38,.06);border-radius:4px;padding:.13em .32em;
-  color:#333a4a;white-space:nowrap}
-.doc a:not(.h-anchor) code{background:rgba(27,86,214,.075);color:#22315a}
-.doc h1 code,.doc h2 code,.doc h3 code,.doc h4 code{font-size:.88em;font-weight:var(--semi)}
+/* Inline code is a light plate set into the sentence: a half-white fill that
+   lifts it off the grey page, a hairline ring drawn inside the box (so it
+   costs no layout and still reads on a white table cell, where the fill
+   alone would vanish), and an ink a shade cooler than the prose, so a name
+   reads as a name without shouting. Padding is in em, so the plate tracks
+   the text it sits in, headings included. */
+.doc code{font-family:var(--mono);font-size:.84em;letter-spacing:-.01em;
+  background:var(--code-bg);box-shadow:inset 0 0 0 1px var(--code-ring);
+  border-radius:5px;padding:.1em .38em .12em;color:var(--code-ink);white-space:nowrap;
+  -webkit-box-decoration-break:clone;box-decoration-break:clone}
+.api code{background:var(--code-bg-on-white)}
+.doc a:not(.h-anchor) code{color:var(--dg-hot);box-shadow:inset 0 0 0 1px rgba(27,86,214,.2)}
+.doc h1 code,.doc h2 code,.doc h3 code,.doc h4 code{font-size:.86em;font-weight:var(--semi)}
+/* a {placeholder} inside code: the braces fade, the name stays */
+.c-var{color:var(--code-var);font-style:italic}
+/* an HTTP verb named in the prose, alone or leading a url */
+.c-verb{font-weight:750;letter-spacing:.02em;color:var(--m-ink)}
+.doc code.c-verb-only{color:var(--m-ink);background:var(--m-soft);box-shadow:inset 0 0 0 1px var(--m-ring);
+  font-weight:750;font-size:.78em;letter-spacing:.04em;padding:.14em .44em .12em;vertical-align:.04em}
+/* one colour per verb, as a family: ink for text, a soft fill and a ring for
+   plates, and a solid for the badge on a call's header */
+.m-get{--m-ink:#1d5fc9;--m-soft:#e8f0fd;--m-ring:#c3d6f7;--m-solid:#2f6fdb}
+.m-post{--m-ink:#15803d;--m-soft:#e6f5ec;--m-ring:#bfe2cc;--m-solid:#1f9d55}
+.m-put{--m-ink:#b25e09;--m-soft:#fdf1e3;--m-ring:#f1d3ad;--m-solid:#d97a12}
+.m-patch{--m-ink:#6d44c9;--m-soft:#f1ecfc;--m-ring:#d9cbf5;--m-solid:#7c55d6}
+.m-delete{--m-ink:#c2312f;--m-soft:#fcebea;--m-ring:#f2c4c2;--m-solid:#d43f3c}
+.m-head,.m-options{--m-ink:#4b5563;--m-soft:#eef0f3;--m-ring:#d6dae1;--m-solid:#6b7280}
 .doc del{color:var(--faint)}
 .doc img{max-width:100%;border-radius:10px}
 
@@ -242,7 +263,109 @@ th,td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px sol
 th{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
   font-weight:var(--bold);white-space:nowrap;background:var(--surface-2)}
 tbody tr:last-child td{border-bottom:0}
-td code{white-space:normal}
+/* Code in a table is often a whole column of it, and a ringed plate on every
+   row turns the column into a grid of boxes. Here it is a soft fill with no
+   ring, a size up from inline code, so a value reads as the
+   value of the row, not as a tag stuck on it. A header keeps its code as
+   written: the header's capitals would change the name. */
+.doc td code{font-size:12.5px;letter-spacing:-.005em;font-weight:500;color:var(--code-ink);
+  background:var(--code-bg-table);box-shadow:none;padding:.2em .5em .22em;border-radius:6px;white-space:normal}
+.doc th code{font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:var(--semi);color:var(--muted);
+  background:rgba(20,26,38,.06);box-shadow:none;padding:.12em .42em}
+
+/* ---- api calls ----
+   A call is a neutral box: a solid badge in the colour of its verb, the url
+   in mono beside it, and a chevron. The header is all there is until it is clicked;
+   the body then lists what each part of the url is. */
+.api{margin:0 0 20px;background:var(--surface);border:1px solid var(--line);border-radius:11px;
+  overflow:hidden}
+.api-head{display:flex;align-items:center;gap:12px;min-height:44px;padding:8px 12px 8px 15px;
+  background:var(--surface);transition:background .12s}
+.api-head[role=button]{cursor:pointer;user-select:text}
+.api-head[role=button]:hover{background:var(--surface-2)}
+.api-head:focus-visible{outline:2px solid var(--m-ring);outline-offset:-2px;border-radius:10px}
+.api-verb{flex:none;min-width:58px;padding:3px 8px;border-radius:6px;text-align:center;
+  font:750 11px/1.5 var(--font);letter-spacing:.07em;color:#fff;background:var(--m-solid);
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.12)}
+.doc .api-url{flex:1;min-width:0;padding:0;background:none;box-shadow:none;border-radius:0;
+  font-size:13px;letter-spacing:-.005em;color:var(--ink);white-space:normal;overflow-wrap:anywhere}
+.api-scheme{color:var(--faint)}
+.api-url .c-var{color:var(--m-ink);font-style:normal;font-weight:var(--semi)}
+.api-title{flex:none;max-width:34%;font-size:12.5px;color:var(--muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.api-tog{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:6px;
+  color:var(--faint);transition:transform .18s ease,color .15s,background .15s}
+.api-tog svg{width:13px;height:13px}
+.api-head:hover .api-tog{color:var(--ink);background:var(--hover)}
+.api.is-open .api-tog{transform:rotate(90deg)}
+/* a described part of the url: marked only while the key is held, so the
+   url reads as a url the rest of the time */
+.api-part{border-radius:4px;transition:background .12s,box-shadow .12s}
+.api-asking .api:not(.is-open) .api-part{box-shadow:inset 0 -1.5px 0 var(--m-ring);cursor:help}
+.api-part.is-asked{background:var(--m-soft);box-shadow:0 0 0 2px var(--m-soft)}
+.api-body{display:none;margin:0;padding:6px 0;border-top:1px solid var(--line)}
+.api.is-open .api-body{display:block}
+.api-row{display:grid;grid-template-columns:minmax(120px,max-content) 1fr;gap:4px 18px;
+  align-items:baseline;padding:8px 16px 8px 18px;font-size:13.5px;line-height:1.6}
+.api-row+.api-row{border-top:1px solid var(--dg-er-line)}
+.api-row dt{margin:0}
+.api-row dt code{font-size:12px}
+.api-row dt .c-var{color:var(--m-ink);font-style:normal;font-weight:var(--semi)}
+.api-row dd{margin:0;font-size:13.5px;line-height:1.6;color:var(--ink)}
+.api-row dd p{margin:0}
+.api-row dd ul{margin:4px 0 0;padding-left:18px}
+.api-row dd li{margin:2px 0}
+.api-tip-key{margin-bottom:5px}
+.api-tip-key code{font-weight:var(--semi);color:#fff}
+.dg-tip.api-tip .c-var{color:#f3c77b;font-style:normal}
+.dg-tip.api-tip ul{margin:5px 0 0;padding-left:16px}
+/* ---- http examples ----
+   The same box as a call, with the example's own parts under the header: the
+   HTTP headers as a quiet list of names and values, then the body, coloured
+   when it is JSON. A response wears its status in the badge, in the colour of
+   what it means; written after the request in the same block, it sits
+   under it in the same box. */
+.http{margin:0 0 20px;background:var(--surface);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.http-msg+.http-msg{border-top:1px solid var(--line)}
+/* the response, when it follows the request in the same box: set a step
+   back, so the two read as what was sent and what came back */
+.http-msg.is-res:not(:first-child){background:#fbfbfd}
+.http-msg.is-res:not(:first-child) .http-headers{background:#f4f5f8}
+.http-head{display:flex;align-items:center;gap:12px;min-height:44px;padding:8px 14px 8px 15px}
+.http-reason{flex:1;min-width:0;font-size:13.5px;font-weight:var(--semi);color:var(--ink)}
+.http-kind{flex:none;font-size:10px;font-weight:var(--bold);letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.http-headers{margin:0;padding:9px 16px 9px 15px;border-top:1px solid var(--line);background:var(--surface-2);
+  font-family:var(--mono);font-size:12px;line-height:1.7}
+.http-headers div{display:flex;gap:8px;min-width:0}
+.http-headers dt{flex:none;color:var(--muted)}
+.http-headers dt::after{content:":";color:var(--faint)}
+.http-headers dd{margin:0;min-width:0;color:var(--ink);overflow-wrap:anywhere}
+.http-body{margin:0;padding:14px 17px 15px;overflow-x:auto;border-top:1px solid var(--line)}
+.doc .http-body code,.doc pre.code code{font-size:12.5px;line-height:1.65;white-space:pre;letter-spacing:0;
+  background:none;box-shadow:none;border-radius:0;padding:0;color:#2a3040}
+/* json */
+.j-key{color:var(--code-ink)}
+.j-str{color:#1f7a55}
+.j-num{color:#b25e09}
+.j-lit{color:#6d44c9;font-weight:var(--semi)}
+.j-pun{color:var(--faint)}
+/* sql: keywords carry the statement's shape, so they get the weight; names
+   stay in the ink, and what is data - strings, numbers - takes the colours
+   JSON uses for the same things */
+.s-kw{color:#1d4fb8;font-weight:600}
+.s-type{color:#0e7490}
+.s-fn{color:#6d44c9}
+.s-str{color:#1f7a55}
+.s-num{color:#b25e09}
+.s-var{color:#a3366b}
+.s-id{color:#2a3040}
+.s-com{color:#8a919e;font-style:italic}
+.s-pun{color:var(--muted)}
+@media (max-width:640px){
+  .api-title,.http-kind{display:none}
+  .api-row{grid-template-columns:1fr}
+}
+@media print{.api-body{display:block}.api-tog{display:none}}
 
 /* ---- misc ---- */
 .empty{padding:60px var(--gutter);width:100%;max-width:var(--column);margin-inline:auto;color:var(--muted)}

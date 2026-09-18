@@ -3,6 +3,7 @@
 import { allCss } from './client/css.mjs';
 import { APP_JS } from './client/app.mjs';
 import { DIAGRAMS_JS } from './client/diagrams.mjs';
+import { API_JS } from './client/api.mjs';
 import { MARGIN_MIN, MARGIN_MAX } from './config.mjs';
 
 const escAttr = (s) => String(s)
@@ -124,6 +125,7 @@ ${script(mermaidTag)}
 ${script(elkTag)}
 <script>${DIAGRAMS_JS}<\/script>
 <script>${APP_JS}<\/script>
+<script>${API_JS}<\/script>
 </body>
 </html>
 `;
