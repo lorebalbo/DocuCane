@@ -110,6 +110,24 @@ export const LIVE_JS = String.raw`
 
   function titleOf(id){ var d = app && app.doc(id); return d ? d.title : id; }
 
+  /* ---------------- saving settings ---------------- */
+
+  // The settings panel keeps its changes through here. Saving renders the page
+  // again, which changes the shell: this page already shows the new settings,
+  // so it takes the shell it is sent instead of reloading like the others.
+  var saving = 0;
+  if (app) app.save = function(settings){
+    saving++;
+    return fetch('/__docucane/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings)
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(body){
+        if (!r.ok) throw new Error(body.error || 'HTTP ' + r.status);
+        if (body.shell) shell = body.shell;
+      });
+    }).then(function(){ saving--; }, function(err){ saving--; throw err; });
+  };
+
   /* ---------------- listening ---------------- */
 
   if (!window.EventSource) return say('Live updates need a newer browser', 'off', null, 0);
@@ -118,7 +136,7 @@ export const LIVE_JS = String.raw`
   es.addEventListener('state', function(e){
     var s;
     try { s = JSON.parse(e.data); } catch (x) { return; }
-    if (s.shell !== shell) return location.reload();
+    if (s.shell !== shell && !saving) return location.reload();
     if (s.error){
       failing = true;
       say('Build failed — the page shows the last good version.\n' + s.error, 'bad', null, 0);

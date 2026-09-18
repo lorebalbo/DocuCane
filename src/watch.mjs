@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { loadConfig } from './config.mjs';
+import { loadConfig, CONFIG_NAMES, MARGIN_MIN, MARGIN_MAX } from './config.mjs';
 import { collectDocs, vendorAssets, pageFor, stampNow, openInBrowser } from './build.mjs';
 import { countLine } from './page.mjs';
 import { LIVE_CSS, LIVE_JS } from './client/live.mjs';
@@ -180,6 +180,62 @@ export async function watch(configArgs, { port = DEFAULT_PORT, open = true, refr
     return at < 0 ? page + tail : page.slice(0, at) + tail + page.slice(at);
   };
 
+  /* -------------------------------------------------------------- settings */
+
+  // The page's settings panel saves here. They are the project's settings, so
+  // they go into its config file - created next to the documents' project if
+  // there is none - and the page is rendered again with them. The page that
+  // saved already shows them and takes the new shell from the reply; any
+  // other open page reloads to pick them up.
+  function saveSettings(req, res) {
+    const json = (status, body) => reply(res, status, TYPES['.json'], JSON.stringify(body));
+    if (req.method !== 'POST') return json(405, { error: 'POST only' });
+    // only this page may change the project, not any site the browser has open
+    const origin = req.headers.origin;
+    if (origin && origin !== 'http://' + req.headers.host) return json(403, { error: 'Not from this page' });
+    if (!/^application\/json\b/.test(req.headers['content-type'] || '')) return json(415, { error: 'JSON only' });
+
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { body += chunk; if (body.length > 4096) req.destroy(); });
+    req.on('end', () => {
+      let next;
+      try { next = JSON.parse(body); } catch { return json(400, { error: 'Not JSON' }); }
+      const margin = next && next.margin;
+      if (margin !== null && !(Number.isFinite(margin) && margin >= MARGIN_MIN && margin <= MARGIN_MAX)) {
+        return json(400, { error: 'margin must be null or ' + MARGIN_MIN + '–' + MARGIN_MAX });
+      }
+
+      const file = cfg.configFile || path.join(cfg.root, CONFIG_NAMES[0]);
+      const before = readOr(file);
+      try {
+        const obj = before == null ? {} : JSON.parse(before);
+        const layout = { ...(obj.layout || {}) };
+        if (margin === null) delete layout.margin; else layout.margin = Math.round(margin);
+        if (Object.keys(layout).length) obj.layout = layout; else delete obj.layout;
+        // written the way the file already was: its indent, its line endings
+        const indent = (before && (before.match(/\n([ \t]+)"/) || [])[1]) || 2;
+        const eol = before && before.includes('\r\n') ? '\r\n' : '\n';
+        const text = (JSON.stringify(obj, null, indent) + '\n').replace(/\n/g, eol);
+        if (text !== before) fs.writeFileSync(file, text);
+        // the watcher will see the write: it is already applied, so let it pass
+        configRaw = text;
+        if (!cfg.configFile) configArgs = { ...configArgs, configPath: file };
+        cfg = loadConfig(configArgs);
+      } catch (err) {
+        return json(500, { error: 'Could not update ' + path.basename(file) + ': ' + err.message });
+      }
+
+      shell = shellOf(cfg, assets);
+      html = pageFor(cfg, docs, assets, stamp);
+      try { fs.writeFileSync(path.join(cfg.outDir, 'index.html'), html); }
+      catch (err) { log('could not write index.html: ' + err.message); }
+      log('settings saved to ' + path.basename(file) + '  (margin ' + (margin === null ? 'automatic' : Math.round(margin) + ' px') + ')');
+      json(200, { shell });
+      broadcast();
+    });
+  }
+
   const server = http.createServer((req, res) => {
     let p;
     try { p = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); }
@@ -197,6 +253,7 @@ export async function watch(configArgs, { port = DEFAULT_PORT, open = true, refr
       return reply(res, 200, TYPES['.json'],
         JSON.stringify({ version: state().version, count: countLine(docs, stamp), docs }));
     }
+    if (p === '/__docucane/settings') return saveSettings(req, res);
     if (p === '/' || p === '/index.html') {
       const page = html || '<!doctype html><meta charset="utf-8"><title>' + escHtml(cfg.title) +
         '</title><body><pre>' + escHtml(error || 'Building…') + '</pre></body>';
