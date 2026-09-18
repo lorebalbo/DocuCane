@@ -122,7 +122,7 @@ a{color:inherit;text-decoration:none}
 .sub-t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 .collapsed .brand-name,.collapsed .brand small,.collapsed .search,.collapsed .nav-group,
-.collapsed .item-title,.collapsed .caret,.collapsed .side-foot{display:none}
+.collapsed .item-title,.collapsed .caret,.collapsed .side-foot,.collapsed #settings-btn{display:none}
 .collapsed .subs,.collapsed .item.open+.subs{display:none}
 .collapsed .side-top{padding:16px 0 12px}
 .collapsed .brand-row{justify-content:center}
@@ -551,4 +551,32 @@ export const CSS_CMT = `
 @media print{.cmt-layer,.cmt-add,.cmt-pop,.cmt-toast,.side-foot{display:none}}
 `;
 
-export const allCss = () => CSS + CSS_MAIN + CSS_BAR + CSS_DIAGRAM + CSS_LIGHTBOX + CSS_CMT;
+/* ---- settings ----
+   A panel, not a modal: it sits over the corner of the page and leaves the
+   rest of it in view, so a change is seen on the documents as it is made. */
+export const CSS_SETTINGS = `
+.settings{position:fixed;z-index:40;top:14px;left:calc(var(--rail) + 14px);width:300px;
+  max-width:calc(100vw - 28px);padding:12px 14px;background:var(--surface);border:1px solid var(--line);
+  border-radius:12px;box-shadow:0 18px 48px -18px rgba(20,26,40,.35);font-size:13px;line-height:1.45}
+.settings[hidden]{display:none}
+.settings-head{display:flex;align-items:center;justify-content:space-between;margin:-4px -6px 8px 0}
+.settings-head b{font-size:13.5px;font-weight:var(--bold);letter-spacing:-.012em}
+.settings-row{padding:10px 0 12px;border-top:1px solid var(--line)}
+.settings-label{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
+.settings-label label{font-weight:var(--semi)}
+.settings-val{font-variant-numeric:tabular-nums;color:var(--muted)}
+.settings input[type=range]{display:block;width:100%;margin:0;accent-color:var(--ink);cursor:pointer}
+.settings-hint{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:6px;
+  font-size:11.5px;color:var(--faint)}
+.settings-link{padding:0;border:0;border-bottom:1px solid var(--line);background:none;font:inherit;
+  color:var(--muted);cursor:pointer}
+.settings-link:hover{color:var(--ink);border-bottom-color:var(--ink)}
+.settings-link:disabled{color:var(--faint);border-bottom-color:transparent;cursor:default}
+.settings-foot{padding-top:9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+.settings-foot.bad{color:#9b2c2c}
+.settings-foot code{font-family:var(--mono);font-size:.92em}
+@media (max-width:820px){.settings{left:14px}}
+@media print{.settings{display:none}}
+`;
+
+export const allCss = () => CSS + CSS_MAIN + CSS_BAR + CSS_DIAGRAM + CSS_LIGHTBOX + CSS_CMT + CSS_SETTINGS;

@@ -1073,7 +1073,99 @@ export const APP_JS = String.raw`
     n.classList.add('dc-changed');
   }
 
-  window.__docucane = {
+  /* ---------------- settings ----------------
+     The panel changes the page as the reader moves a control, so the effect is
+     judged on the documents themselves. Keeping a change is not the page's to
+     do - a page opened from its file cannot write the project's config - so it
+     hands the settings to whoever can: docucane --watch sets app.save. */
+
+  var setBox = document.getElementById('settings');
+  var setBtn = document.getElementById('settings-btn');
+  var setMarginIn = document.getElementById('set-margin');
+  var setMarginVal = document.getElementById('set-margin-val');
+  var setMarginAuto = document.getElementById('set-margin-auto');
+  var setStatus = document.getElementById('settings-status');
+  var settings = { margin: CFG.margin == null ? null : CFG.margin };
+  var saveTimer = 0, saved = JSON.stringify(settings);
+
+  function applyMargin(px){
+    var root = document.documentElement;
+    root.classList.toggle('fixed-margin', px != null);
+    if (px == null) root.style.removeProperty('--margin');
+    else root.style.setProperty('--margin', px + 'px');
+    schedulePlace();
+  }
+
+  // the room there is now, from the edge of the reading area to the text
+  function marginNow(){
+    var col = main.querySelector('.doc') || main.querySelector('.head') || main.querySelector('.empty');
+    if (!col) return Number(setMarginIn.min);
+    var pad = parseFloat(getComputedStyle(col).paddingLeft) || 0;
+    return Math.round(col.getBoundingClientRect().left - main.getBoundingClientRect().left + pad);
+  }
+
+  function showSettings(){
+    var auto = settings.margin == null;
+    setMarginIn.value = auto ? marginNow() : settings.margin;
+    setMarginVal.textContent = auto ? 'Automatic · ' + setMarginIn.value + ' px' : settings.margin + ' px';
+    setMarginAuto.disabled = auto;
+  }
+
+  function status(html, bad){
+    setStatus.className = 'settings-foot' + (bad ? ' bad' : '');
+    setStatus.innerHTML = html;
+  }
+  function idleStatus(){
+    status(app.save ? 'Changes are saved to the project, in <code>docs.config.json</code>.'
+      : 'Preview only: a page opened from its file cannot change the project. ' +
+        'Run <code>docucane --watch</code> to save changes.');
+  }
+
+  function changed(){
+    applyMargin(settings.margin);
+    showSettings();
+    if (!app.save) return;
+    clearTimeout(saveTimer);
+    status('Saving…');
+    // a slider sends a value for every step; the project is written once it rests
+    saveTimer = setTimeout(function(){
+      var sent = JSON.stringify(settings);
+      if (sent === saved) return idleStatus();
+      app.save(JSON.parse(sent)).then(function(){
+        saved = sent;
+        status('Saved to <code>docs.config.json</code>.');
+      }, function(err){
+        status('Not saved: ' + escText(err && err.message || err), true);
+      });
+    }, 450);
+  }
+  function escText(s){ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+  function openSettings(){
+    showSettings();
+    idleStatus();
+    setBox.hidden = false;
+    setMarginIn.focus();
+  }
+  function closeSettings(){ setBox.hidden = true; }
+
+  setBtn.addEventListener('click', function(){ if (setBox.hidden) openSettings(); else closeSettings(); });
+  document.getElementById('settings-close').addEventListener('click', closeSettings);
+  setMarginIn.addEventListener('input', function(){ settings.margin = Number(setMarginIn.value); changed(); });
+  setMarginAuto.addEventListener('click', function(){ settings.margin = null; changed(); });
+  document.addEventListener('mousedown', function(e){
+    if (!setBox.hidden && !setBox.contains(e.target) && !setBtn.contains(e.target)) closeSettings();
+  });
+  // Esc closes the panel before it does anything else on the page
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Escape' || setBox.hidden) return;
+    e.stopImmediatePropagation();
+    closeSettings();
+    setBtn.focus();
+  }, true);
+
+  var app = window.__docucane = {
+    save: null,
     apply: applyUpdate,
     bring: bring,
     doc: function(id){ return byId[id]; }
