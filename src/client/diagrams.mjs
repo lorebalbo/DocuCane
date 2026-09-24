@@ -1130,11 +1130,17 @@ export const DIAGRAMS_JS = String.raw`
       gGroup.appendChild(g);
     });
 
+    // a flowchart's roots - the nodes no arrow points into - are where reading
+    // starts, so they are set apart from the boxes that follow from them
+    var entered = {};
+    (data.edges || []).forEach(function(e){ entered[e.end] = true; });
+
     Object.keys(abs).forEach(function(id){
       var a = abs[id], n = a.n;
       if (!n || n.isGroup) return;
       var st = styleOf(n);
-      var g = mk('g', { 'data-node': id }, 'dg-el dg-node' + (n.shape === 'erBox' ? ' dg-er' : ''));
+      var g = mk('g', { 'data-node': id }, 'dg-el dg-node' + (n.shape === 'erBox' ? ' dg-er'
+        : !isEr && !entered[id] ? ' is-root' : ''));
       if (n.shape === 'erBox'){ erBoxEl(g, a, n, st); gNode.appendChild(g); return; }
       var s = shapeEl(a.x, a.y, a.w, a.h, n.shape);
       s.setAttribute('class', 'dg-node-shape');

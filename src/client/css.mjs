@@ -446,6 +446,7 @@ export const CSS_DIAGRAM = `
 svg.dg{display:block;margin-inline:auto;cursor:default;-webkit-user-select:none;user-select:none}
 svg.dg text{font-family:var(--font);dominant-baseline:middle}
 .dg-node-shape{fill:var(--dg-node);stroke:var(--dg-node-line);stroke-width:1.1}
+.dg-node.is-root .dg-node-shape{fill:var(--bg)}
 .dg-node-text{fill:var(--ink);font-size:12.5px}
 .dg-group-shape{fill:var(--dg-group);stroke:var(--dg-group-line);stroke-width:1}
 .dg-group-text{fill:var(--muted);font-size:12.5px;font-weight:560}
